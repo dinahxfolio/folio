@@ -91,18 +91,25 @@ def merge(rng, merge_type="MERGE_ALL"):
 
 
 def recreate_sheet(sheets):
-    """Delete and recreate the SETTINGS sheet so old merges/formatting don't
-    linger from the previous column layout. Sheets won't let you delete the
-    last remaining sheet in a spreadsheet, so a temporary placeholder sheet
-    holds the fort while SETTINGS is dropped and rebuilt."""
+    """Create the SETTINGS sheet if it doesn't exist yet. IMPORTANT: never
+    delete+recreate an existing sheet that other tabs already reference --
+    Google Sheets binds cross-sheet formula references (e.g. DASHBOARD's
+    "=SETTINGS!$D$15") to an internal sheet identity, not just the visible
+    sheetId/title. Deleting and recreating SETTINGS (even with the identical
+    sheetId and name) previously broke every DASHBOARD formula that
+    referenced it with "#REF! (Unresolved sheet name 'SETTINGS')", even
+    though a sheet named SETTINGS still existed afterwards. Once downstream
+    tabs exist, updates must happen in place: build_requests()/build_values()
+    already overwrite the full grid's formatting and content, which is
+    sufficient since SETTINGS' shape only ever grows additively."""
     meta = sheets.spreadsheets().get(
         spreadsheetId=SPREADSHEET_ID, fields="sheets.properties"
     ).execute()
     exists = any(s["properties"]["sheetId"] == SHEET_ID for s in meta["sheets"])
+    if exists:
+        return
 
     requests = [{"addSheet": {"properties": {"sheetId": 999999, "title": "__temp__"}}}]
-    if exists:
-        requests.append({"deleteSheet": {"sheetId": SHEET_ID}})
     requests.append({
         "addSheet": {
             "properties": {
@@ -437,27 +444,31 @@ def build_values(layout):
     cell(f"{VALUE_COL}13", f'=CONCATENATE("Monthly budget target (",{currency_cell},")")')
     cell(f"{COL_E}13", "Due day")
 
+    # Sample monthly budget targets, plausible representative amounts (Sarah's
+    # sample data set, same spirit as the general-settings sample values).
     # Due day (day of month, 1-31) only applies to Bills -- it feeds the
-    # DASHBOARD Upcoming Bills block. Other groups leave it blank.
+    # DASHBOARD Upcoming Bills block. Other groups leave due day blank.
     type_groups = [
-        ("INCOME", [("Salary / Wages", None), ("Freelance", None), ("Side hustle", None),
-                     ("Bonus", None), ("Other income", None)]),
-        ("BILLS", [("Rent / Mortgage", 1), ("Electricity", 15), ("Gas / Water", 18),
-                    ("Internet", 5), ("Phone", 10), ("Insurance", 1), ("Subscriptions", 1)]),
-        ("EXPENSES", [("Groceries", None), ("Dining out", None), ("Transport", None),
-                       ("Health", None), ("Clothing", None), ("Entertainment", None),
-                       ("Personal care", None), ("Gifts", None), ("Miscellaneous", None)]),
-        ("SAVINGS", [("Emergency fund", None), ("Holiday", None), ("House deposit", None),
-                      ("Retirement", None), ("Other savings", None)]),
-        ("DEBT PAYMENTS", [("Credit card", None), ("Student loan", None),
-                            ("Personal loan", None), ("Car finance", None)]),
+        ("INCOME", [("Salary / Wages", 3200, None), ("Freelance", 0, None),
+                     ("Side hustle", 0, None), ("Bonus", 0, None), ("Other income", 0, None)]),
+        ("BILLS", [("Rent / Mortgage", 950, 1), ("Electricity", 60, 15), ("Gas / Water", 45, 18),
+                    ("Internet", 35, 5), ("Phone", 30, 10), ("Insurance", 40, 1),
+                    ("Subscriptions", 25, 1)]),
+        ("EXPENSES", [("Groceries", 400, None), ("Dining out", 120, None), ("Transport", 100, None),
+                       ("Health", 50, None), ("Clothing", 60, None), ("Entertainment", 80, None),
+                       ("Personal care", 40, None), ("Gifts", 30, None), ("Miscellaneous", 50, None)]),
+        ("SAVINGS", [("Emergency fund", 200, None), ("Holiday", 100, None), ("House deposit", 150, None),
+                      ("Retirement", 100, None), ("Other savings", 50, None)]),
+        ("DEBT PAYMENTS", [("Credit card", 150, None), ("Student loan", 200, None),
+                            ("Personal loan", 100, None), ("Car finance", 180, None)]),
     ]
     row_cursor = 13  # 0-indexed row for first divider (row 14)
     for group_name, categories in type_groups:
         cell(f"{LABEL_COL}{row_cursor + 1}", group_name)
         row_cursor += 1
-        for i, (catname, due_day) in enumerate(categories):
+        for i, (catname, target, due_day) in enumerate(categories):
             cell(f"{LABEL_COL}{row_cursor + i + 1}", catname)
+            cell(f"{VALUE_COL}{row_cursor + i + 1}", target)
             if due_day is not None:
                 cell(f"{COL_E}{row_cursor + i + 1}", due_day)
         row_cursor += len(categories)

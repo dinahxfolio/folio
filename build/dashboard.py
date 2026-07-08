@@ -1,0 +1,608 @@
+"""Build the DASHBOARD tab.
+
+Column scheme (padding convention applies, A blank): 12 content columns B-M,
+a 12-wide grid so both the 3-card headline row (4 cols/card) and the 4-card
+breakdown row (3 cols/card) divide evenly. N/O are a buffer gap; P-T hold
+small visible (not hidden) helper cells/columns -- MonthNumber and the
+Upcoming Bills ranking table -- each with an explanatory note, same pattern
+as month tabs' I1 closing-balance helper.
+
+Row plan (1-based):
+  1     Header bar: title (B:F) + month selector (G1) + days-left pill (I:L)
+  2     Instruction note
+  4-6   Headline cards (Left to spend / Total income / Total spent): label / value / subtitle
+  8-10  Breakdown cards (Bills / Expenses / Savings / Debt): label / value / subtitle
+  12    UPCOMING BILLS band
+  13    Upcoming Bills column headers
+  14-20 up to 7 unpaid-bill rows, ranked by soonest due day
+  22    MONTHLY BUDGET band
+  23    Budget table column headers (Category / Budget target / Actual / Difference / Progress)
+  24-58 category rows mirroring SETTINGS' 5-group structure (35 rows incl. 5 dividers)
+  60    Total row
+
+Formula-level decisions per design-brief-v2 Section 6:
+  - Month-tab totals via CHOOSE(), not INDIRECT().
+  - Currency symbol in header/card labels only, never baked into a numeric cell.
+
+Budget Target column is a live reference to SETTINGS (=SETTINGS!D<row>), not an
+independently editable/carried-forward value -- v1's own stated rule ("SETTINGS
+is the source of truth for all category names and budget targets... every
+other tab references SETTINGS, never its own hardcoded values") takes
+precedence over v1's DASHBOARD-specific wording about an editable, carried-
+forward target, since v2 didn't re-open that rule and the per-month-editable
+design doesn't fit a single shared SETTINGS table. See build/NOTES.md.
+"""
+from auth import get_services
+from month_tabs import COL_AMOUNT as MONTH_COL_AMOUNT, COL_CATEGORY as MONTH_COL_CATEGORY, \
+    COL_TYPE as MONTH_COL_TYPE, FIRST_DATA_ROW, LAST_DATA_ROW, MONTHS
+from palette import (
+    ARIAL_BLACK,
+    CALIBRI,
+    CREAM,
+    DEEP_ROSE,
+    DUSTY_BLUE,
+    FINANCE_GREEN,
+    HOT_PINK,
+    MUTED_TAN,
+    NEAR_BLACK,
+    PALE_NEUTRAL,
+    ROSE_PALE_TINT,
+    ROW_TINT,
+    ROW_WHITE,
+    WHITE,
+)
+
+SHEET_ID = 200
+PAD = 1
+N_HELPER_BILLS = 7  # matches the 7 Bills categories
+
+with open("spreadsheet_id.txt") as f:
+    SPREADSHEET_ID = f.read().strip()
+
+
+def col_letter(logical_col):
+    n = logical_col + PAD + 1
+    letters = ""
+    while n:
+        n, rem = divmod(n - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
+
+
+def grid_range(start_row, end_row, start_col, end_col):
+    return {
+        "sheetId": SHEET_ID,
+        "startRowIndex": start_row,
+        "endRowIndex": end_row,
+        "startColumnIndex": start_col + PAD,
+        "endColumnIndex": end_col + PAD,
+    }
+
+
+def cell_format(bg=None, fg=NEAR_BLACK, font=CALIBRI, size=10, bold=False,
+                 italic=False, align="LEFT", valign="MIDDLE", wrap=False,
+                 number_format=None):
+    text_format = {"foregroundColor": fg, "fontFamily": font, "fontSize": size,
+                    "bold": bold, "italic": italic}
+    fmt = {
+        "horizontalAlignment": align,
+        "verticalAlignment": valign,
+        "textFormat": text_format,
+        "wrapStrategy": "WRAP" if wrap else "OVERFLOW_CELL",
+    }
+    if bg is not None:
+        fmt["backgroundColor"] = bg
+    if number_format is not None:
+        fmt["numberFormat"] = number_format
+    return fmt
+
+
+def repeat_cell(rng, fmt, fields="userEnteredFormat"):
+    return {"repeatCell": {"range": rng, "cell": {"userEnteredFormat": fmt}, "fields": fields}}
+
+
+def merge(rng, merge_type="MERGE_ALL"):
+    return {"mergeCells": {"range": rng, "mergeType": merge_type}}
+
+
+def border_request(rng, side, color, width=2, style="SOLID"):
+    return {"updateBorders": {"range": rng, side: {"style": style, "width": width, "color": color}}}
+
+
+# Logical column letters, content is B..M (indices 0-11).
+def L(i):
+    return col_letter(i)
+
+
+# Budget table column spans (logical, end-exclusive).
+CAT_SPAN = (0, 4)     # B:E
+TARGET_SPAN = (4, 6)  # F:G
+ACTUAL_SPAN = (6, 8)  # H:I
+DIFF_SPAN = (8, 10)   # J:K
+PROG_SPAN = (10, 12)  # L:M
+
+# Helper columns beyond the buffer (logical indices 14-18 -> P,Q,R,S,T).
+MONTH_NUMBER_COL = L(14)     # P
+BILLS_CAT_COL = L(15)        # Q
+BILLS_DUE_COL = L(16)        # R
+BILLS_PAID_COL = L(17)       # S
+BILLS_RANK_COL = L(18)       # T
+
+MONTH_NUMBER_CELL = f"{MONTH_NUMBER_COL}$1"   # for use inside formulas (absolute)
+MONTH_NUMBER_ADDR = f"{MONTH_NUMBER_COL}1"    # for direct cell writes
+MONTH_ARRAY = '{"' + '","'.join(MONTHS) + '"}'
+
+TYPE_GROUPS = [
+    ("INCOME", FINANCE_GREEN, ["Salary / Wages", "Freelance", "Side hustle", "Bonus", "Other income"]),
+    ("BILLS", DUSTY_BLUE, ["Rent / Mortgage", "Electricity", "Gas / Water", "Internet", "Phone",
+                            "Insurance", "Subscriptions"]),
+    ("EXPENSES", MUTED_TAN, ["Groceries", "Dining out", "Transport", "Health", "Clothing",
+                              "Entertainment", "Personal care", "Gifts", "Miscellaneous"]),
+    ("SAVINGS", FINANCE_GREEN, ["Emergency fund", "Holiday", "House deposit", "Retirement",
+                                 "Other savings"]),
+    ("DEBT PAYMENTS", DEEP_ROSE, ["Credit card", "Student loan", "Personal loan", "Car finance"]),
+]
+
+# SETTINGS row numbers for each group's categories (see build/NOTES.md cell map).
+SETTINGS_ROWS = {
+    "INCOME": list(range(15, 20)),
+    "BILLS": list(range(21, 28)),
+    "EXPENSES": list(range(29, 38)),
+    "SAVINGS": list(range(39, 44)),
+    "DEBT PAYMENTS": list(range(45, 49)),
+}
+
+
+def choose_range(month_tab_col):
+    parts = [f"{m}!${month_tab_col}${FIRST_DATA_ROW}:${month_tab_col}${LAST_DATA_ROW}" for m in MONTHS]
+    return f"CHOOSE({MONTH_NUMBER_CELL}," + ",".join(parts) + ")"
+
+
+def recreate_sheet(sheets):
+    """Safe to delete+recreate DASHBOARD for now since nothing else
+    references it (ANNUAL OVERVIEW/GOALS reference SETTINGS and the month
+    tabs directly, not DASHBOARD). If that ever changes, switch to the
+    create-only-if-missing pattern used in settings_tab.py/month_tabs.py --
+    a delete+recreate breaks cross-sheet formula references elsewhere even
+    when the sheetId/title are reused identically. See build/NOTES.md."""
+    meta = sheets.spreadsheets().get(
+        spreadsheetId=SPREADSHEET_ID, fields="sheets.properties"
+    ).execute()
+    exists = any(s["properties"]["sheetId"] == SHEET_ID for s in meta["sheets"])
+
+    requests = [{"addSheet": {"properties": {"sheetId": 999998, "title": "__temp2__"}}}]
+    if exists:
+        requests.append({"deleteSheet": {"sheetId": SHEET_ID}})
+    requests.append({
+        "addSheet": {
+            "properties": {
+                "sheetId": SHEET_ID,
+                "title": "DASHBOARD",
+                "index": 1,  # right after SETTINGS, before the month tabs
+                "gridProperties": {"rowCount": 65, "columnCount": 20, "hideGridlines": True,
+                                    "frozenRowCount": 1},
+                "tabColor": FINANCE_GREEN,
+            }
+        }
+    })
+    requests.append({"deleteSheet": {"sheetId": 999998}})
+    sheets.spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID, body={"requests": requests}
+    ).execute()
+
+
+def build_requests():
+    requests = []
+
+    requests.append(repeat_cell(
+        {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 65, "startColumnIndex": 0, "endColumnIndex": 20},
+        cell_format(bg=CREAM, fg=NEAR_BLACK, font=CALIBRI, size=10),
+    ))
+
+    widths = {0: 28}
+    for i in range(1, 13):
+        widths[i] = 95
+    widths[13] = 30
+    widths[14] = 30
+    for i in range(15, 20):
+        widths[i] = 90
+    for col, width in widths.items():
+        requests.append({
+            "updateDimensionProperties": {
+                "range": {"sheetId": SHEET_ID, "dimension": "COLUMNS", "startIndex": col, "endIndex": col + 1},
+                "properties": {"pixelSize": width},
+                "fields": "pixelSize",
+            }
+        })
+
+    # Row 1: title + month selector + days-left pill.
+    title_range = grid_range(0, 1, 0, 5)
+    selector_range = grid_range(0, 1, 5, 6)   # single cell G1, not merged
+    pill_range = grid_range(0, 1, 8, 12)
+    requests.append(merge(title_range))
+    requests.append(merge(pill_range))
+    requests.append(repeat_cell(
+        title_range, cell_format(bg=FINANCE_GREEN, fg=WHITE, font=ARIAL_BLACK, size=18, bold=True, align="LEFT"),
+    ))
+    requests.append(repeat_cell(
+        selector_range, cell_format(bg=PALE_NEUTRAL, fg=FINANCE_GREEN, font=CALIBRI, size=11, bold=True,
+                                     align="CENTER"),
+    ))
+    requests.append(repeat_cell(
+        pill_range, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=11, bold=True, align="CENTER"),
+    ))
+    requests.append(border_request(pill_range, "left", HOT_PINK, width=3))
+    requests.append({
+        "updateDimensionProperties": {
+            "range": {"sheetId": SHEET_ID, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
+            "properties": {"pixelSize": 44},
+            "fields": "pixelSize",
+        }
+    })
+
+    # Row 2: instruction note.
+    note_range = grid_range(1, 2, 0, 12)
+    requests.append(merge(note_range))
+    requests.append(repeat_cell(
+        note_range, cell_format(bg=CREAM, fg=NEAR_BLACK, font=CALIBRI, size=9, italic=True, wrap=True),
+    ))
+    requests.append({
+        "updateDimensionProperties": {
+            "range": {"sheetId": SHEET_ID, "dimension": "ROWS", "startIndex": 1, "endIndex": 2},
+            "properties": {"pixelSize": 28},
+            "fields": "pixelSize",
+        }
+    })
+
+    # Headline cards (rows 4-6): Left to spend (hero, deep rose) / Total income / Total spent.
+    headline_spans = [(0, 4), (4, 8), (8, 12)]
+    for idx, (start, end) in enumerate(headline_spans):
+        is_hero = idx == 0
+        label_r = grid_range(3, 4, start, end)
+        value_r = grid_range(4, 5, start, end)
+        sub_r = grid_range(5, 6, start, end)
+        requests.append(merge(label_r))
+        requests.append(merge(value_r))
+        requests.append(merge(sub_r))
+        bg = DEEP_ROSE if is_hero else PALE_NEUTRAL
+        fg = WHITE if is_hero else NEAR_BLACK
+        requests.append(repeat_cell(label_r, cell_format(bg=bg, fg=fg, font=CALIBRI, size=10, bold=True)))
+        requests.append(repeat_cell(value_r, cell_format(bg=bg, fg=fg, font=ARIAL_BLACK, size=22, bold=True)))
+        requests.append(repeat_cell(sub_r, cell_format(bg=bg, fg=fg, font=CALIBRI, size=9, italic=True)))
+        if is_hero:
+            requests.append(border_request(grid_range(3, 6, start, end), "left", HOT_PINK, width=4))
+    requests.append({
+        "updateDimensionProperties": {
+            "range": {"sheetId": SHEET_ID, "dimension": "ROWS", "startIndex": 4, "endIndex": 5},
+            "properties": {"pixelSize": 34},
+            "fields": "pixelSize",
+        }
+    })
+
+    # Breakdown cards (rows 8-10): Bills / Expenses / Savings / Debt.
+    breakdown_spans = [(0, 3), (3, 6), (6, 9), (9, 12)]
+    breakdown_colors = [DUSTY_BLUE, MUTED_TAN, FINANCE_GREEN, DEEP_ROSE]
+    for (start, end), color in zip(breakdown_spans, breakdown_colors):
+        label_r = grid_range(7, 8, start, end)
+        value_r = grid_range(8, 9, start, end)
+        sub_r = grid_range(9, 10, start, end)
+        requests.append(merge(label_r))
+        requests.append(merge(value_r))
+        requests.append(merge(sub_r))
+        requests.append(repeat_cell(label_r, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=9,
+                                                           bold=True)))
+        requests.append(repeat_cell(value_r, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=ARIAL_BLACK, size=15,
+                                                           bold=True)))
+        requests.append(repeat_cell(sub_r, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=8,
+                                                         italic=True)))
+        requests.append(border_request(grid_range(7, 10, start, end), "top", color, width=4))
+
+    def section_band(row_idx, bg=FINANCE_GREEN):
+        r = grid_range(row_idx, row_idx + 1, 0, 12)
+        requests.append(merge(r))
+        requests.append(repeat_cell(r, cell_format(bg=bg, fg=WHITE, font=ARIAL_BLACK, size=12, bold=True)))
+
+    # Row 12 (idx 11): UPCOMING BILLS band.
+    section_band(11, bg=DUSTY_BLUE)
+    ub_cat = grid_range(12, 13, 0, 4)
+    ub_amt = grid_range(12, 13, 4, 8)
+    ub_due = grid_range(12, 13, 8, 12)
+    for r in (ub_cat, ub_amt, ub_due):
+        requests.append(merge(r))
+        requests.append(repeat_cell(r, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10, bold=True)))
+    for i in range(N_HELPER_BILLS):
+        row_idx = 13 + i
+        band_bg = ROW_WHITE if i % 2 == 0 else ROW_TINT
+        r_cat = grid_range(row_idx, row_idx + 1, 0, 4)
+        r_amt = grid_range(row_idx, row_idx + 1, 4, 8)
+        r_due = grid_range(row_idx, row_idx + 1, 8, 12)
+        requests.append(merge(r_cat))
+        requests.append(merge(r_amt))
+        requests.append(merge(r_due))
+        requests.append(repeat_cell(r_cat, cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10)))
+        requests.append(repeat_cell(r_amt, cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10, align="RIGHT",
+                                                         number_format={"type": "NUMBER", "pattern": "#,##0.00"})))
+        requests.append(repeat_cell(r_due, cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10, align="RIGHT")))
+
+    # Row 22 (idx 21): MONTHLY BUDGET band.
+    section_band(21)
+    for span in (CAT_SPAN, TARGET_SPAN, ACTUAL_SPAN, DIFF_SPAN, PROG_SPAN):
+        r = grid_range(22, 23, *span)
+        requests.append(merge(r))
+        requests.append(repeat_cell(r, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10, bold=True)))
+
+    row_cursor = 23  # 0-indexed row of first divider (row 24, 1-based)
+    for group_name, color, categories in TYPE_GROUPS:
+        divider_r = grid_range(row_cursor, row_cursor + 1, 0, 12)
+        requests.append(merge(divider_r))
+        requests.append(repeat_cell(divider_r, cell_format(bg=color, fg=WHITE, font=CALIBRI, size=10, bold=True)))
+        row_cursor += 1
+        for i, _cat in enumerate(categories):
+            r = row_cursor + i
+            band_bg = ROW_WHITE if i % 2 == 0 else ROW_TINT
+            cat_r = grid_range(r, r + 1, *CAT_SPAN)
+            tgt_r = grid_range(r, r + 1, *TARGET_SPAN)
+            act_r = grid_range(r, r + 1, *ACTUAL_SPAN)
+            dif_r = grid_range(r, r + 1, *DIFF_SPAN)
+            pro_r = grid_range(r, r + 1, *PROG_SPAN)
+            for rr in (cat_r, tgt_r, act_r, dif_r, pro_r):
+                requests.append(merge(rr))
+            requests.append(repeat_cell(cat_r, cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10)))
+            for rr in (tgt_r, act_r, dif_r):
+                requests.append(repeat_cell(rr, cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10,
+                                                              align="RIGHT",
+                                                              number_format={"type": "NUMBER", "pattern": "#,##0.00"})))
+            requests.append(repeat_cell(pro_r, cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=9,
+                                                             align="CENTER")))
+        row_cursor += len(categories)
+
+    total_row_idx = row_cursor + 1  # idx 59 -> row 60, after a spacer at idx 58 -> row 59
+    for span in (CAT_SPAN, TARGET_SPAN, ACTUAL_SPAN, DIFF_SPAN, PROG_SPAN):
+        r = grid_range(total_row_idx, total_row_idx + 1, *span)
+        requests.append(merge(r))
+        requests.append(repeat_cell(r, cell_format(bg=ROSE_PALE_TINT, fg=DEEP_ROSE, font=CALIBRI, size=10, bold=True,
+                                                     align="RIGHT" if span != CAT_SPAN else "LEFT")))
+
+    # Helper cells (P, Q:T) -- visible but de-emphasised, with explanatory notes.
+    helper_note_targets = {
+        f"{MONTH_NUMBER_COL}1": "Internal helper: numeric index (1-12) of the selected month, "
+                                  "used by CHOOSE() formulas across this tab. Please don't delete.",
+        f"{BILLS_CAT_COL}1": "Internal helper table (rows 1-7): Bills categories, due days, "
+                              "whether paid this month, and a sort key -- feeds the Upcoming "
+                              "Bills block above. Please don't delete.",
+    }
+    for a1, note in helper_note_targets.items():
+        requests.append({
+            "updateCells": {
+                "range": a1_to_grid_range(a1),
+                "rows": [{"values": [{"note": note}]}],
+                "fields": "note",
+            }
+        })
+    helper_range = grid_range(0, N_HELPER_BILLS, 14, 19)
+    requests.append(repeat_cell(
+        helper_range, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=8),
+    ))
+
+    layout = {"total_row_idx": total_row_idx}
+    return requests, layout
+
+
+def conditional_formats():
+    """Progress-column colour coding, per category row. <80% used: Finance
+    green (no explicit rule needed, that's the base state). 80-99%: Rose
+    pale tint. >=100%: Deep rose solid (hot pink is border/line-accent only
+    in v2's confirmed palette, so it cannot be used as the over-budget fill)."""
+    requests = []
+    row_cursor = 23
+    for group_name, _color, categories in TYPE_GROUPS:
+        row_cursor += 1
+        for i in range(len(categories)):
+            r = row_cursor + i
+            pro_range = grid_range(r, r + 1, *PROG_SPAN)
+            act_col = L(ACTUAL_SPAN[0])
+            tgt_col = L(TARGET_SPAN[0])
+            ratio = f'IFERROR({act_col}{r + 1}/{tgt_col}{r + 1},0)'
+            requests.append({
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [pro_range],
+                        "booleanRule": {
+                            "condition": {"type": "CUSTOM_FORMULA",
+                                           "values": [{"userEnteredValue": f'={ratio}>=1'}]},
+                            "format": {"backgroundColor": DEEP_ROSE,
+                                       "textFormat": {"foregroundColor": WHITE, "bold": True}},
+                        },
+                    },
+                    "index": 0,
+                }
+            })
+            requests.append({
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [pro_range],
+                        "booleanRule": {
+                            "condition": {"type": "CUSTOM_FORMULA",
+                                           "values": [{"userEnteredValue": f'=AND({ratio}>=0.8,{ratio}<1)'}]},
+                            "format": {"backgroundColor": ROSE_PALE_TINT,
+                                       "textFormat": {"foregroundColor": DEEP_ROSE, "bold": True}},
+                        },
+                    },
+                    "index": 1,
+                }
+            })
+        row_cursor += len(categories)
+    return requests
+
+
+def data_validations():
+    return [{
+        "setDataValidation": {
+            "range": grid_range(0, 1, 5, 6),
+            "rule": {
+                "condition": {"type": "ONE_OF_LIST", "values": [{"userEnteredValue": m} for m in MONTHS]},
+                "showCustomUi": True,
+                "strict": True,
+            },
+        }
+    }]
+
+
+def build_values(layout):
+    values = []
+
+    def cell(a1, v):
+        values.append({"range": f"DASHBOARD!{a1}", "values": [[v]]})
+
+    month_selector_cell = f"{L(5)}1"  # G1
+
+    cell(f"{L(0)}1", "DASHBOARD")
+    cell(month_selector_cell, "Jan")
+    cell(MONTH_NUMBER_ADDR, f'=MATCH({month_selector_cell},{MONTH_ARRAY},0)')
+    cell(f"{L(8)}1", '=CONCATENATE(TEXT(EOMONTH(TODAY(),0)-TODAY(),"0")," days left in ",TEXT(TODAY(),"mmmm"))')
+
+    cell(f"{L(0)}2",
+         "Actuals update automatically. To log a transaction, go to the tab for the selected "
+         "month and enter it in the next empty row.")
+
+    # Budget table: category rows first (headline/breakdown cards reference the group ranges below).
+    row_cursor = 23
+    group_row_ranges = {}  # group_name -> (first_row_1based, last_row_1based)
+    amount_choose = choose_range(MONTH_COL_AMOUNT)
+    category_choose = choose_range(MONTH_COL_CATEGORY)
+    cat_col = L(CAT_SPAN[0])
+    tgt_col = L(TARGET_SPAN[0])
+    act_col = L(ACTUAL_SPAN[0])
+    dif_col = L(DIFF_SPAN[0])
+    pro_col = L(PROG_SPAN[0])
+
+    for group_name, _color, categories in TYPE_GROUPS:
+        cell(f"{cat_col}{row_cursor + 1}", group_name)
+        row_cursor += 1
+        settings_rows = SETTINGS_ROWS[group_name]
+        first_data_row_1based = row_cursor + 1
+        for i, _catname in enumerate(categories):
+            r1 = row_cursor + i + 1  # 1-based
+            settings_row = settings_rows[i]
+            cell(f"{cat_col}{r1}", f"=SETTINGS!$B${settings_row}")
+            cell(f"{tgt_col}{r1}", f"=SETTINGS!$D${settings_row}")
+            cell(f"{act_col}{r1}", f'=SUMIFS({amount_choose},{category_choose},{cat_col}{r1})')
+            cell(f"{dif_col}{r1}", f"={tgt_col}{r1}-{act_col}{r1}")
+            cell(f"{pro_col}{r1}",
+                 f'=IFERROR(SPARKLINE(MIN({act_col}{r1}/{tgt_col}{r1},1),'
+                 f'{{"charttype","bar";"max",1;"color1","#3D7A5A"}}),"")')
+        last_data_row_1based = row_cursor + len(categories)
+        group_row_ranges[group_name] = (first_data_row_1based, last_data_row_1based)
+        row_cursor += len(categories)
+
+    def group_sum(col, group_name):
+        first, last = group_row_ranges[group_name]
+        return f"SUM({col}{first}:{col}{last})"
+
+    income_target = group_sum(tgt_col, "INCOME")
+    income_actual = group_sum(act_col, "INCOME")
+    spend_groups = ["BILLS", "EXPENSES", "SAVINGS", "DEBT PAYMENTS"]
+    spend_target = "+".join(group_sum(tgt_col, g) for g in spend_groups)
+    spend_actual = "+".join(group_sum(act_col, g) for g in spend_groups)
+
+    # Headline cards.
+    cell(f"{L(0)}4", "LEFT TO SPEND")
+    cell(f"{L(0)}5", f'=CONCATENATE(SETTINGS!$D$7,TEXT(({spend_target})-({spend_actual}),"#,##0.00"))')
+    cell(f"{L(0)}6", f'=CONCATENATE("of ",SETTINGS!$D$7,TEXT({spend_target},"#,##0.00")," budgeted")')
+
+    cell(f"{L(4)}4", "TOTAL INCOME")
+    cell(f"{L(4)}5", f'=CONCATENATE(SETTINGS!$D$7,TEXT({income_actual},"#,##0.00"))')
+    cell(f"{L(4)}6", f'=CONCATENATE("of ",SETTINGS!$D$7,TEXT({income_target},"#,##0.00")," budgeted")')
+
+    cell(f"{L(8)}4", "TOTAL SPENT")
+    cell(f"{L(8)}5", f'=CONCATENATE(SETTINGS!$D$7,TEXT({spend_actual},"#,##0.00"))')
+    cell(f"{L(8)}6", f'=CONCATENATE("of ",SETTINGS!$D$7,TEXT({spend_target},"#,##0.00")," budgeted")')
+
+    # Breakdown cards.
+    breakdown_specs = [(0, "BILLS", "Bills"), (3, "EXPENSES", "Expenses"),
+                        (6, "SAVINGS", "Savings"), (9, "DEBT PAYMENTS", "Debt")]
+    for start, group_name, label in breakdown_specs:
+        tgt = group_sum(tgt_col, group_name)
+        act = group_sum(act_col, group_name)
+        cell(f"{L(start)}8", label.upper())
+        cell(f"{L(start)}9", f'=CONCATENATE(SETTINGS!$D$7,TEXT(({tgt})-({act}),"#,##0.00"))')
+        cell(f"{L(start)}10", f'=CONCATENATE("of ",SETTINGS!$D$7,TEXT({tgt},"#,##0.00")," budgeted")')
+
+    # Upcoming Bills helper table (Q:T, rows 1-7) and display rows (14-20).
+    bills_settings_rows = SETTINGS_ROWS["BILLS"]
+    type_choose = choose_range(MONTH_COL_TYPE)
+    for i, settings_row in enumerate(bills_settings_rows):
+        r = i + 1
+        cell(f"{BILLS_CAT_COL}{r}", f"=SETTINGS!$B${settings_row}")
+        cell(f"{BILLS_DUE_COL}{r}", f"=SETTINGS!$E${settings_row}")
+        paid_formula = (f'=COUNTIFS({type_choose},"Bill",{category_choose},{BILLS_CAT_COL}{r})>0')
+        cell(f"{BILLS_PAID_COL}{r}", paid_formula)
+        cell(f"{BILLS_RANK_COL}{r}",
+             f'=IF({BILLS_PAID_COL}{r},9999+{i}*0.0001,{BILLS_DUE_COL}{r}+{i}*0.0001)')
+
+    rank_range = f"${BILLS_RANK_COL}$1:${BILLS_RANK_COL}${N_HELPER_BILLS}"
+    cat_range = f"${BILLS_CAT_COL}$1:${BILLS_CAT_COL}${N_HELPER_BILLS}"
+    due_range = f"${BILLS_DUE_COL}$1:${BILLS_DUE_COL}${N_HELPER_BILLS}"
+    settings_target_range = "SETTINGS!$D$21:$D$27"
+
+    for n in range(1, N_HELPER_BILLS + 1):
+        r = 13 + n  # display row (14-20)
+        small_expr = f"SMALL({rank_range},{n})"
+        pos_expr = f"MATCH({small_expr},{rank_range},0)"
+        no_more = f"{small_expr}>=9999"
+        cell(f"{cat_col}{r}", f'=IF({no_more},"",INDEX({cat_range},{pos_expr}))')
+        cell(f"{L(4)}{r}", f'=IF({no_more},"",INDEX({settings_target_range},{pos_expr}))')
+        cell(f"{L(8)}{r}", f'=IF({no_more},"",INDEX({due_range},{pos_expr}))')
+
+    # Total row.
+    total_row = layout["total_row_idx"] + 1
+    all_groups = ["INCOME", "BILLS", "EXPENSES", "SAVINGS", "DEBT PAYMENTS"]
+    cell(f"{cat_col}{total_row}", "TOTAL")
+    cell(f"{tgt_col}{total_row}", "=" + "+".join(group_sum(tgt_col, g) for g in all_groups))
+    cell(f"{act_col}{total_row}", "=" + "+".join(group_sum(act_col, g) for g in all_groups))
+    cell(f"{dif_col}{total_row}", f"={tgt_col}{total_row}-{act_col}{total_row}")
+
+    return values
+
+
+def a1_to_grid_range(a1):
+    import re
+    m = re.match(r"([A-Z]+)(\d+)", a1)
+    col_letters, row_num = m.group(1), int(m.group(2))
+    col = 0
+    for ch in col_letters:
+        col = col * 26 + (ord(ch) - ord("A") + 1)
+    col -= 1
+    row = row_num - 1
+    return {"sheetId": SHEET_ID, "startRowIndex": row, "endRowIndex": row + 1,
+            "startColumnIndex": col, "endColumnIndex": col + 1}
+
+
+def main():
+    sheets, _drive = get_services()
+
+    recreate_sheet(sheets)
+
+    requests, layout = build_requests()
+    requests.extend(conditional_formats())
+    requests.extend(data_validations())
+
+    CHUNK = 400
+    for i in range(0, len(requests), CHUNK):
+        sheets.spreadsheets().batchUpdate(
+            spreadsheetId=SPREADSHEET_ID, body={"requests": requests[i:i + CHUNK]}
+        ).execute()
+
+    values = build_values(layout)
+    VCHUNK = 300
+    for i in range(0, len(values), VCHUNK):
+        sheets.spreadsheets().values().batchUpdate(
+            spreadsheetId=SPREADSHEET_ID,
+            body={"valueInputOption": "USER_ENTERED", "data": values[i:i + VCHUNK]},
+        ).execute()
+
+    print("DASHBOARD built. Layout:", layout)
+
+
+if __name__ == "__main__":
+    main()

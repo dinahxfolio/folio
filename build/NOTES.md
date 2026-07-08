@@ -147,6 +147,96 @@ All three were caught by reading FORMATTED_VALUE and UNFORMATTED_VALUE back
 across the whole Jan-Dec chain, not by the batchUpdate/values.update calls
 succeeding without error.
 
+## DASHBOARD (sheetId 200)
+
+Built per v1 Tab 2 + v2 Section 6. Content columns B-M (12, so the 3-card
+headline row and 4-card breakdown row both divide evenly), helper cells in
+P-T (MonthNumber, and a small ranking table for Upcoming Bills), with an
+explanatory note on each helper, same pattern as month tabs' I1.
+
+- Month selector (G1, dropdown Jan-Dec) drives `MonthNumber` (P1,
+  `=MATCH(G1,{"Jan",...,"Dec"},0)`), which every CHOOSE() formula on the tab
+  uses, e.g. `SUMIFS(CHOOSE(P$1,Jan!$F$4:$F$48,...),CHOOSE(P$1,Jan!$E$4:$E$48,...),category)`.
+  Verified by switching the selector to Feb and confirming every headline/
+  breakdown number changed to match Feb's actual sample transactions, not
+  just that Jan's numbers happened to look right.
+- Budget Target column is a **live reference to SETTINGS** (`=SETTINGS!$D$15`
+  etc.), not an independently editable/carried-forward value the way v1's
+  DASHBOARD section describes -- v1's own higher-priority rule ("SETTINGS is
+  the source of truth... every other tab references SETTINGS, never its own
+  hardcoded values") wins over that section's specific wording, and the
+  per-month-editable-target design doesn't fit a single shared SETTINGS table
+  anyway. v2 doesn't revisit this.
+- Progress column uses `SPARKLINE(MIN(actual/target,1),{"charttype","bar";...})`
+  per v2's explicit guidance for Sheets (Excel would use native Data Bars).
+  **Caveat:** SPARKLINE cells return no readable value via the Sheets API
+  (values.get returns nothing for them, formula-only) -- so unlike every
+  other formula in this build, its output could not be verified by reading
+  a calculated value back, only by confirming the underlying ratio inputs
+  (Actual/Target columns) are individually correct, and that IFERROR
+  suppresses the 0/0 case (Freelance, target=0) without an error string
+  leaking into FORMATTED_VALUE. Worth a visual check in the Sheet itself.
+- Progress colour coding (conditional formatting, not the sparkline colour):
+  <80% = no rule (base Finance green sparkline), 80-99% = Rose pale tint
+  fill, >=100% = Deep rose solid fill. Not v1's green/amber/red -- amber
+  doesn't exist in v2's palette, and hot pink is confirmed border/line-only,
+  so it cannot be the over-budget fill either.
+- Hero card ("Left to spend") uses Deep rose solid fill -- v2's palette
+  table explicitly names Deep rose for "hero card fill (rare, high-emphasis
+  only)", replacing v1's amber. Hot pink appears only as a thin left-edge
+  border accent on the hero card and the days-left pill, per v2's "border/
+  line accents only" rule.
+- Upcoming Bills block (spec not in either brief -- see the DASHBOARD
+  dependencies section above) ranks the 7 Bills categories by due day using
+  COUNTIFS (paid-this-month check) + SMALL/INDEX/MATCH with a tiny
+  position-based tie-breaker (`due_day + i*0.0001`), not SORT()/FILTER().
+  The brief's SORT() rejection was specifically about Excel-version
+  compatibility for a different, now-obsolete feature (the flat newest-first
+  TRANSACTIONS view); it doesn't transfer to this Sheets-only block, but
+  SMALL/INDEX/MATCH was used anyway to stay consistent with the brief's
+  general preference for classic, non-dynamic-array functions. Verified
+  against Jan's sample data: Rent and Electricity (paid in Jan's sample
+  transactions) correctly excluded; the remaining 5 unpaid bills appear
+  sorted 1, 1, 5, 10, 18 by due day.
+- "Days left" pill always reflects days left in the *actual* current month
+  (`EOMONTH(TODAY(),0)-TODAY()`), not the month selected for review -- v1's
+  literal formula only makes sense when the selected month is the current
+  one; showing e.g. "-40 days left" while reviewing a past month would be
+  confusing and wasn't the evident intent.
+
+### Critical lesson: never delete+recreate a sheet other tabs already reference
+
+Building DASHBOARD (which formula-references SETTINGS and the month tabs)
+after re-running settings_tab.py exposed a serious bug: settings_tab.py and
+month_tabs.py both used a delete-then-recreate pattern (needed early on to
+avoid stale merges/formatting from earlier layout iterations). Once DASHBOARD
+existed with formulas like `=SETTINGS!$D$15`, re-running settings_tab.py
+(which deletes sheetId 100 and adds a new sheet back with the *identical*
+sheetId and title "SETTINGS") broke every one of those formulas with
+`#REF! (Unresolved sheet name 'SETTINGS')` -- even though a sheet named
+SETTINGS still existed immediately afterwards with the same ID. Google
+Sheets evidently binds cross-sheet formula references to an internal sheet
+identity that a delete+recreate invalidates regardless of matching
+sheetId/title. Re-running dashboard.py's values.batchUpdate (re-writing the
+same formula text) repaired it, since that creates fresh bindings against
+the sheet that currently exists.
+
+Fix applied: `recreate_sheet()`/`recreate_month_sheets()` in settings_tab.py
+and month_tabs.py now only **add** a sheet if it doesn't exist yet, and
+never delete+recreate one that already exists -- build_requests()/
+build_values() already overwrite the full grid's formatting and content on
+every run, which is sufficient since each tab's shape only ever grows
+additively. dashboard.py still uses delete+recreate for now since nothing
+references DASHBOARD yet (ANNUAL OVERVIEW/GOALS will reference SETTINGS and
+the month tabs directly, not DASHBOARD) -- flagged in its own docstring to
+switch to the same safe pattern if that ever changes.
+
+A side effect of the temp-sheet dance across separate script runs also
+scrambled the tab bar order (Jan ended up before DASHBOARD, SETTINGS at the
+very end) -- fixed with an explicit batch of `updateSheetProperties`
+(`index`) requests in the desired left-to-right order. Confirmed final order:
+SETTINGS, DASHBOARD, Jan..Dec.
+
 ## Decisions this session had to make (not specified by either brief)
 
 - Editable-cell fill: Pale neutral (#F4F2EC) rather than v1's Pistachio, since v2's

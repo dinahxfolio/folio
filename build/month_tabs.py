@@ -110,24 +110,28 @@ def merge(rng, merge_type="MERGE_ALL"):
 
 
 def recreate_month_sheets(sheets):
-    """Delete existing month sheets (if any) and add them fresh, in Jan..Dec
-    order, right after SETTINGS in the tab bar for now (DASHBOARD will be
-    inserted before them once it exists)."""
+    """Add any month sheets that don't exist yet. IMPORTANT: never delete and
+    recreate a month sheet once DASHBOARD (or later, ANNUAL OVERVIEW/GOALS)
+    references it via CHOOSE() -- Google Sheets binds cross-sheet formula
+    references to an internal sheet identity, not just the visible
+    sheetId/title, so a delete+recreate breaks every formula elsewhere that
+    pointed at it (confirmed the hard way when this happened to SETTINGS;
+    see build/NOTES.md). Once a month sheet exists, build_requests_for_month/
+    build_values_for_month update it in place."""
     meta = sheets.spreadsheets().get(
         spreadsheetId=SPREADSHEET_ID, fields="sheets.properties"
     ).execute()
     existing_ids = {s["properties"]["sheetId"] for s in meta["sheets"]}
 
     requests = []
-    for m in MONTHS:
+    for i, m in enumerate(MONTHS):
         sid = SHEET_IDS[m]
         if sid in existing_ids:
-            requests.append({"deleteSheet": {"sheetId": sid}})
-    for i, m in enumerate(MONTHS):
+            continue
         requests.append({
             "addSheet": {
                 "properties": {
-                    "sheetId": SHEET_IDS[m],
+                    "sheetId": sid,
                     "title": m,
                     "index": i + 1,  # after SETTINGS for now
                     "gridProperties": {"rowCount": 60, "columnCount": 9, "hideGridlines": True},
@@ -135,6 +139,8 @@ def recreate_month_sheets(sheets):
                 }
             }
         })
+    if not requests:
+        return
     sheets.spreadsheets().batchUpdate(
         spreadsheetId=SPREADSHEET_ID, body={"requests": requests}
     ).execute()
