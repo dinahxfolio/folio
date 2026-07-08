@@ -118,7 +118,8 @@ def row_height(sheets_requests, row_idx, height, end_idx=None):
 CATEGORY_GROUPS = [
     ("INCOME", FINANCE_GREEN, ["Salary / Wages", "Freelance", "Side hustle", "Bonus", "Other income"]),
     ("BILLS", DUSTY_BLUE, ["Rent / Mortgage", "Electricity", "Gas / Water", "Internet", "Phone",
-                            "Insurance", "Subscriptions"]),
+                            "Insurance", "Subscriptions", "Council Tax / Property Tax", "Childcare",
+                            "Streaming Services", "Home Maintenance", "Membership Fees"]),
     ("EXPENSES", MUTED_TAN, ["Groceries", "Dining out", "Transport", "Health", "Clothing",
                               "Entertainment", "Personal care", "Gifts", "Miscellaneous"]),
     ("SAVINGS", FINANCE_GREEN, ["Emergency fund", "Holiday", "House deposit", "Retirement",

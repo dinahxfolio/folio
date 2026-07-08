@@ -294,22 +294,23 @@ def build_requests_for_month(month_idx):
             "range": grid_range(sid, FIRST_DATA_ROW - 1, LAST_DATA_ROW, 2, 3),
             "rule": {
                 "condition": {"type": "ONE_OF_RANGE",
-                               # SETTINGS' Type list shifted from B71:B75 to
-                               # B72:B76 when a note row was added to the
-                               # Savings Goals section -- see build/NOTES.md.
-                               "values": [{"userEnteredValue": "=SETTINGS!$B$72:$B$76"}]},
+                               # SETTINGS' Type list row moves whenever the
+                               # category/goals section grows -- currently
+                               # B77:B81 (5 more Bills categories added).
+                               # See build/NOTES.md for the shift history.
+                               "values": [{"userEnteredValue": "=SETTINGS!$B$77:$B$81"}]},
                 "showCustomUi": True,
                 "strict": True,
             },
         }
     })
-    # Data validation: Category dropdown (flat list with divider rows, B14:B48).
+    # Data validation: Category dropdown (flat list with divider rows, B14:B53).
     requests.append({
         "setDataValidation": {
             "range": grid_range(sid, FIRST_DATA_ROW - 1, LAST_DATA_ROW, 3, 4),
             "rule": {
                 "condition": {"type": "ONE_OF_RANGE",
-                               "values": [{"userEnteredValue": "=SETTINGS!$B$14:$B$48"}]},
+                               "values": [{"userEnteredValue": "=SETTINGS!$B$14:$B$53"}]},
                 "showCustomUi": True,
                 "strict": True,
             },

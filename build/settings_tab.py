@@ -115,7 +115,7 @@ def recreate_sheet(sheets):
             "properties": {
                 "sheetId": SHEET_ID,
                 "title": "SETTINGS",
-                "gridProperties": {"rowCount": 80, "columnCount": 7, "hideGridlines": True},
+                "gridProperties": {"rowCount": 90, "columnCount": 7, "hideGridlines": True},
                 "tabColor": NEAR_BLACK,
             }
         }
@@ -133,7 +133,7 @@ def build_requests():
     # (including the padding column, so it reads as blank margin, not white).
     requests.append({
         "repeatCell": {
-            "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 80,
+            "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 90,
                       "startColumnIndex": 0, "endColumnIndex": 7},
             "cell": {"userEnteredFormat": cell_format(bg=CREAM, fg=NEAR_BLACK, font=CALIBRI, size=10)},
             "fields": "userEnteredFormat",
@@ -248,7 +248,8 @@ def build_requests():
     type_groups = [
         ("INCOME", FINANCE_GREEN, ["Salary / Wages", "Freelance", "Side hustle", "Bonus", "Other income"]),
         ("BILLS", DUSTY_BLUE, ["Rent / Mortgage", "Electricity", "Gas / Water", "Internet", "Phone",
-                                "Insurance", "Subscriptions"]),
+                                "Insurance", "Subscriptions", "Council Tax / Property Tax", "Childcare",
+                                "Streaming Services", "Home Maintenance", "Membership Fees"]),
         ("EXPENSES", MUTED_TAN, ["Groceries", "Dining out", "Transport", "Health", "Clothing",
                                   "Entertainment", "Personal care", "Gifts", "Miscellaneous"]),
         ("SAVINGS", FINANCE_GREEN, ["Emergency fund", "Holiday", "House deposit", "Retirement",
@@ -468,7 +469,9 @@ def build_values(layout):
                      ("Side hustle", 0, None), ("Bonus", 0, None), ("Other income", 0, None)]),
         ("BILLS", [("Rent / Mortgage", 950, 1), ("Electricity", 60, 15), ("Gas / Water", 45, 18),
                     ("Internet", 35, 5), ("Phone", 30, 10), ("Insurance", 40, 1),
-                    ("Subscriptions", 25, 1)]),
+                    ("Subscriptions", 25, 1), ("Council Tax / Property Tax", 150, 1),
+                    ("Childcare", 400, 1), ("Streaming Services", 15, 15),
+                    ("Home Maintenance", 50, 1), ("Membership Fees", 40, 1)]),
         ("EXPENSES", [("Groceries", 400, None), ("Dining out", 120, None), ("Transport", 100, None),
                        ("Health", 50, None), ("Clothing", 60, None), ("Entertainment", 80, None),
                        ("Personal care", 40, None), ("Gifts", 30, None), ("Miscellaneous", 50, None)]),
@@ -588,13 +591,13 @@ def clear_sheet_content(sheets):
         body={"requests": [
             {
                 "unmergeCells": {
-                    "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 80,
+                    "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 90,
                               "startColumnIndex": 0, "endColumnIndex": 7},
                 }
             },
             {
                 "updateCells": {
-                    "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 80,
+                    "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 90,
                               "startColumnIndex": 0, "endColumnIndex": 7},
                     "fields": "*",
                 }
@@ -603,10 +606,35 @@ def clear_sheet_content(sheets):
     ).execute()
 
 
+def ensure_row_count(sheets, min_rows):
+    """Grow the sheet's rowCount if needed. recreate_sheet() only sets
+    gridProperties on first creation, so an existing sheet whose layout has
+    grown (more categories, more goal rows, etc.) needs this run separately
+    every time -- confirmed necessary when Bills grew from 7 to 12
+    categories and pushed content past the old rowCount=80."""
+    meta = sheets.spreadsheets().get(
+        spreadsheetId=SPREADSHEET_ID, fields="sheets(properties(sheetId,gridProperties))"
+    ).execute()
+    current = next(s["properties"]["gridProperties"]["rowCount"]
+                    for s in meta["sheets"] if s["properties"]["sheetId"] == SHEET_ID)
+    if current >= min_rows:
+        return
+    sheets.spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID,
+        body={"requests": [{
+            "updateSheetProperties": {
+                "properties": {"sheetId": SHEET_ID, "gridProperties": {"rowCount": min_rows}},
+                "fields": "gridProperties.rowCount",
+            }
+        }]},
+    ).execute()
+
+
 def main():
     sheets, _drive = get_services()
 
     recreate_sheet(sheets)
+    ensure_row_count(sheets, 90)
     clear_sheet_content(sheets)
 
     requests, layout = build_requests()

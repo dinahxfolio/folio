@@ -38,29 +38,31 @@ is the top-left cell of that merge (column D), not column C.
 - `B8` Starting balance label / `D8` value
 - `B9` Savings rate threshold label / `D9` value (fraction, e.g. 0.10 = 10%)
 - Category table: category names live in column B (merged B:C), rows 15-19 (Income),
-  21-27 (Bills), 29-37 (Expenses), 39-43 (Savings), 45-48 (Debt payments). Budget
-  targets are in column D (single cell, not merged). Column E holds "Due day"
-  (day of month, 1-31) but only for the 7 Bills rows (21-27) -- feeds DASHBOARD's
-  Upcoming Bills block. Divider label rows (14, 20, 28, 38, 44) are merged B:E
-  and are part of the same contiguous **B14:B48** range (the divider row itself
-  is row 14, so the range must start there, not at row 15) — that whole range
-  is the Data Validation source used for the Category dropdown on month tabs
-  (flat list with divider rows, per the v2 design brief's rejected-Apps-Script
-  decision). Selecting a divider row is a known, accepted tradeoff.
-- Savings goals table (genuine 4-column table, no merges): note row 51 (goal
-  name must match a Category name, see below), header row 52 (B=#, C=Goal
-  name, D=Target amount formula, E=Target date), data rows 53-60. Sample
+  21-32 (Bills, 12 categories), 34-42 (Expenses), 44-48 (Savings), 50-53 (Debt
+  payments). Budget targets are in column D (single cell, not merged). Column E
+  holds "Due day" (day of month, 1-31) but only for the 12 Bills rows (21-32)
+  -- feeds DASHBOARD's Upcoming Bills block. Divider label rows (14, 20, 33, 43,
+  49) are merged B:E and are part of the same contiguous **B14:B53** range (the
+  divider row itself is row 14, so the range must start there, not at row 15)
+  — that whole range is the Data Validation source used for the Category
+  dropdown on month tabs (flat list with divider rows, per the v2 design
+  brief's rejected-Apps-Script decision). Selecting a divider row is a known,
+  accepted tradeoff.
+- Savings goals table (genuine 4-column table, no merges): note row 56 (goal
+  name must match a Category name, see below), header row 57 (B=#, C=Goal
+  name, D=Target amount formula, E=Target date), data rows 58-65. Sample
   goals are the 5 real Savings category names (Emergency fund, Holiday,
   House deposit, Retirement, Other savings), not arbitrary names, since
   GOALS tracks progress via an exact Category-name match (see the "GOALS
   design gap" entry below).
-- Debt tracker table (3-column table, no merges): header row 63 (B=#, C=Debt name,
-  D=Starting balance formula), data rows 64-67. Column E is unused on this table.
-- Transaction types helper list (for the Type dropdown on month tabs): `B72:B76`
+- Debt tracker table (3-column table, no merges): header row 68 (B=#, C=Debt name,
+  D=Starting balance formula), data rows 69-72. Column E is unused on this table.
+- Transaction types helper list (for the Type dropdown on month tabs): `B77:B81`
   = Income, Bill, Expense, Saving, Debt (exact casing from the v1 brief, unchanged by v2).
-  **These row numbers moved once already** (were B71:B75) when a note row was
-  inserted above the Savings Goals table -- if SETTINGS' layout changes again,
-  re-check every hardcoded SETTINGS row reference in month_tabs.py/dashboard.py/
+  **These row numbers have moved twice already** (B71:B75 -> B72:B76 -> B77:B81,
+  the second time when Bills grew from 7 to 12 categories) -- if SETTINGS' layout
+  changes again, re-check every hardcoded SETTINGS row reference in
+  month_tabs.py/dashboard.py/
   annual_overview.py, not just the ones that seem related.
 
 ## Palette source of truth
@@ -552,6 +554,50 @@ Verified both branches: blank name correctly falls back to the generic
 title, and a real name produces "<Name>'s Budget". Scoped to DASHBOARD
 only, since that's what was asked -- ANNUAL OVERVIEW/GOALS/START HERE
 still use their generic titles.
+
+## Bills expanded from 7 to 12 categories
+
+Minnie asked for at least 5 more Bill category slots. Added: Council Tax /
+Property Tax, Childcare, Streaming Services, Home Maintenance, Membership
+Fees (avoiding overlap with the existing generic "Insurance" and
+"Subscriptions" entries). This is a default/sample-content choice, not an
+architectural one -- like the other default category names, buyers are
+expected to rename them, so the exact picks don't need to be exhaustively
+justified.
+
+Ripple effects, all updated and re-verified:
+- SETTINGS: category rows all shift down by 5 from Bills onward (Bills
+  21-32, Expenses 34-42, Savings 44-48, Debt payments 50-53, Savings Goals
+  56-65, Debt Tracker 68-72, Transaction Types 77-81). Needed a rowCount
+  bump (80 -> 90) -- the existing sheet's grid was too small once content
+  shifted past row 80, caught by an "exceeds grid limits" error immediately.
+  Added `ensure_row_count()` since `recreate_sheet()`'s create-only-if-missing
+  pattern only sets gridProperties on first creation, not on later runs
+  against an existing (undersized) sheet.
+- month_tabs.py: both dropdown ranges shifted (Category B14:B48 -> B14:B53;
+  Type B72:B76 -> B77:B81).
+- dashboard.py: `SETTINGS_ROWS` dict and the Upcoming Bills target range
+  (`SETTINGS!$D$21:$D$27` -> `$D$21:$D$32`) updated for the new SETTINGS
+  positions. `N_HELPER_BILLS` (7 -> 12) also **changed DASHBOARD's own
+  internal layout**: the Upcoming Bills block now needs 12 display rows
+  instead of 7, which pushes the MONTHLY BUDGET band and everything below
+  it down by 5 rows *within DASHBOARD itself* -- unrelated to SETTINGS'
+  shift, a second, independent cascade from the same change. This had been
+  hardcoded (`section_band(21, ...)`, `row_cursor = 23`) in four different
+  functions; replaced with module-level `BUDGET_BAND_IDX = 14 + N_HELPER_BILLS`
+  (and `BUDGET_HEADER_IDX`/`FIRST_DIVIDER_IDX` derived from it) so this
+  entire class of bug can't recur if Bills' count changes again.
+- goals.py / start_here.py: `GOALS_SETTINGS_ROWS`, `DEBT_SETTINGS_ROWS`, and
+  the static `CATEGORY_GROUPS` Bills list all updated.
+- annual_overview.py needed no changes -- it sums by Type via month-tab
+  SUMIFS, never referencing SETTINGS category rows directly.
+
+**General lesson**: a category-count change is not purely a SETTINGS
+change. Any tab whose own row layout is sized off a category count (here,
+DASHBOARD's Upcoming Bills block sizing off Bills specifically) needs that
+sizing driven by a shared constant, not a hardcoded row number matching
+today's count -- otherwise the coupling is invisible until something
+silently overlaps.
 
 ## Decisions this session had to make (not specified by either brief)
 

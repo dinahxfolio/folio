@@ -7,18 +7,20 @@ small visible (not hidden) helper cells/columns -- MonthNumber and the
 Upcoming Bills ranking table -- each with an explanatory note, same pattern
 as month tabs' I1 closing-balance helper.
 
-Row plan (1-based):
+Row plan (1-based; MONTHLY BUDGET onward shifts with N_HELPER_BILLS, since
+the Upcoming Bills block's height depends on how many Bills categories
+SETTINGS has -- currently 12, so the numbers below reflect that):
   1     Header bar: title (B:F) + month selector (G1) + days-left pill (I:L)
   2     Instruction note
   4-6   Headline cards (Left to spend / Total income / Total spent): label / value / subtitle
   8-10  Breakdown cards (Bills / Expenses / Savings / Debt): label / value / subtitle
   12    UPCOMING BILLS band
   13    Upcoming Bills column headers
-  14-20 up to 7 unpaid-bill rows, ranked by soonest due day
-  22    MONTHLY BUDGET band
-  23    Budget table column headers (Category / Budget target / Actual / Difference / Progress)
-  24-58 category rows mirroring SETTINGS' 5-group structure (35 rows incl. 5 dividers)
-  60    Total row
+  14-25 up to 12 unpaid-bill rows, ranked by soonest due day
+  27    MONTHLY BUDGET band
+  28    Budget table column headers (Category / Budget target / Actual / Difference / Progress)
+  29-63 category rows mirroring SETTINGS' 5-group structure (35 rows incl. 5 dividers)
+  65    Total row
 
 Formula-level decisions per design-brief-v2 Section 6:
   - Month-tab totals via CHOOSE(), not INDIRECT().
@@ -54,7 +56,14 @@ from palette import (
 
 SHEET_ID = 200
 PAD = 1
-N_HELPER_BILLS = 7  # matches the 7 Bills categories
+N_HELPER_BILLS = 12  # matches SETTINGS' 12 Bills categories (was 7)
+
+# MONTHLY BUDGET band's row position, computed rather than hardcoded: it
+# must sit right after the Upcoming Bills block (band + header + N data
+# rows + 1 spacer), whose height depends on N_HELPER_BILLS.
+BUDGET_BAND_IDX = 14 + N_HELPER_BILLS
+BUDGET_HEADER_IDX = BUDGET_BAND_IDX + 1
+FIRST_DIVIDER_IDX = BUDGET_HEADER_IDX + 1  # 0-indexed row of the first category-group divider
 
 with open("spreadsheet_id.txt") as f:
     SPREADSHEET_ID = f.read().strip()
@@ -149,7 +158,8 @@ MONTH_ARRAY = '{"' + '","'.join(MONTHS) + '"}'
 TYPE_GROUPS = [
     ("INCOME", FINANCE_GREEN, ["Salary / Wages", "Freelance", "Side hustle", "Bonus", "Other income"]),
     ("BILLS", DUSTY_BLUE, ["Rent / Mortgage", "Electricity", "Gas / Water", "Internet", "Phone",
-                            "Insurance", "Subscriptions"]),
+                            "Insurance", "Subscriptions", "Council Tax / Property Tax", "Childcare",
+                            "Streaming Services", "Home Maintenance", "Membership Fees"]),
     ("EXPENSES", MUTED_TAN, ["Groceries", "Dining out", "Transport", "Health", "Clothing",
                               "Entertainment", "Personal care", "Gifts", "Miscellaneous"]),
     ("SAVINGS", FINANCE_GREEN, ["Emergency fund", "Holiday", "House deposit", "Retirement",
@@ -160,10 +170,10 @@ TYPE_GROUPS = [
 # SETTINGS row numbers for each group's categories (see build/NOTES.md cell map).
 SETTINGS_ROWS = {
     "INCOME": list(range(15, 20)),
-    "BILLS": list(range(21, 28)),
-    "EXPENSES": list(range(29, 38)),
-    "SAVINGS": list(range(39, 44)),
-    "DEBT PAYMENTS": list(range(45, 49)),
+    "BILLS": list(range(21, 33)),
+    "EXPENSES": list(range(34, 43)),
+    "SAVINGS": list(range(44, 49)),
+    "DEBT PAYMENTS": list(range(50, 54)),
 }
 
 
@@ -342,17 +352,20 @@ def build_requests():
                                                          number_format={"type": "NUMBER", "pattern": "#,##0.00"})))
         requests.append(repeat_cell(r_due, cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10, align="RIGHT")))
 
-    # Row 22 (idx 21): MONTHLY BUDGET band -- narrowed to B:H (7 cols) so
-    # I:M is free for the charts, which sit alongside the table rather than
-    # below everything.
+    # MONTHLY BUDGET band -- narrowed to B:H (7 cols) so I:M is free for the
+    # charts, which sit alongside the table rather than below everything.
+    # Row position is computed, not hardcoded: it must sit right after the
+    # Upcoming Bills block, whose height depends on N_HELPER_BILLS (grew
+    # from 7 to 12 when Bills categories did -- a hardcoded "21" here would
+    # have silently overlapped the expanded Upcoming Bills rows).
     BUDGET_TABLE_WIDTH = 7
-    section_band(21, span_cols=BUDGET_TABLE_WIDTH)
+    section_band(BUDGET_BAND_IDX, span_cols=BUDGET_TABLE_WIDTH)
     for span in (CAT_SPAN, TARGET_SPAN, ACTUAL_SPAN, DIFF_SPAN, PROG_SPAN):
-        r = grid_range(22, 23, *span)
+        r = grid_range(BUDGET_HEADER_IDX, BUDGET_HEADER_IDX + 1, *span)
         maybe_merge(r)
         requests.append(repeat_cell(r, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10, bold=True)))
 
-    row_cursor = 23  # 0-indexed row of first divider (row 24, 1-based)
+    row_cursor = FIRST_DIVIDER_IDX
     for group_name, color, categories in TYPE_GROUPS:
         divider_r = grid_range(row_cursor, row_cursor + 1, 0, BUDGET_TABLE_WIDTH)
         requests.append(merge(divider_r))
@@ -427,7 +440,7 @@ def build_requests():
         bar_data_range, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=8),
     ))
 
-    layout = {"total_row_idx": total_row_idx, "budget_band_idx": 21}
+    layout = {"total_row_idx": total_row_idx, "budget_band_idx": BUDGET_BAND_IDX}
     return requests, layout
 
 
@@ -437,7 +450,7 @@ def conditional_formats():
     pale tint. >=100%: Deep rose solid (hot pink is border/line-accent only
     in v2's confirmed palette, so it cannot be used as the over-budget fill)."""
     requests = []
-    row_cursor = 23
+    row_cursor = FIRST_DIVIDER_IDX
     for group_name, _color, categories in TYPE_GROUPS:
         row_cursor += 1
         for i in range(len(categories)):
@@ -493,10 +506,10 @@ def data_validations():
 
 def compute_group_row_ranges():
     """1-based (first, last) category-data-row range per group in the budget
-    table, e.g. INCOME -> (25, 29). Deterministic from TYPE_GROUPS' fixed
+    table, e.g. INCOME -> (30, 34). Deterministic from TYPE_GROUPS' fixed
     category counts, so both build_values() and build_charts() can share it
     without build_values() needing to run first."""
-    row_cursor = 23
+    row_cursor = FIRST_DIVIDER_IDX
     ranges = {}
     for group_name, _color, categories in TYPE_GROUPS:
         row_cursor += 1  # divider row
@@ -532,10 +545,10 @@ def build_values(layout):
     cell(f"{L(4)}13", '=CONCATENATE("Amount (",SETTINGS!$D$7,")")')
     cell(f"{L(8)}13", "Due day")
 
-    cell(f"{L(0)}22", "MONTHLY BUDGET")
+    cell(f"{L(0)}{BUDGET_BAND_IDX + 1}", "MONTHLY BUDGET")
 
     # Budget table: category rows first (headline/breakdown cards reference the group ranges below).
-    row_cursor = 23
+    row_cursor = FIRST_DIVIDER_IDX
     amount_choose = choose_range(MONTH_COL_AMOUNT)
     category_choose = choose_range(MONTH_COL_CATEGORY)
     cat_col = L(CAT_SPAN[0])
@@ -632,7 +645,7 @@ def build_values(layout):
     rank_range = f"${BILLS_RANK_COL}$1:${BILLS_RANK_COL}${N_HELPER_BILLS}"
     cat_range = f"${BILLS_CAT_COL}$1:${BILLS_CAT_COL}${N_HELPER_BILLS}"
     due_range = f"${BILLS_DUE_COL}$1:${BILLS_DUE_COL}${N_HELPER_BILLS}"
-    settings_target_range = "SETTINGS!$D$21:$D$27"
+    settings_target_range = "SETTINGS!$D$21:$D$32"
 
     for n in range(1, N_HELPER_BILLS + 1):
         r = 13 + n  # display row (14-20)
@@ -685,8 +698,8 @@ def build_charts(layout):
     act_sources = [_gr(0, BAR_CHART_ROWS, bar_act_col_idx, bar_act_col_idx + 1)]
 
     chart_col_idx = PROG_SPAN[1] + PAD  # column I, right after the narrowed budget table (B:H)
-    donut_row = layout["budget_band_idx"]       # row 22
-    bar_row = layout["budget_band_idx"] + 15    # ~row 37, below the donut
+    donut_row = layout["budget_band_idx"]       # same row as the MONTHLY BUDGET band
+    bar_row = layout["budget_band_idx"] + 15    # ~15 rows below the donut
 
     donut_chart = {
         "addChart": {

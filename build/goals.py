@@ -119,10 +119,10 @@ def border_request(rng, side, color, width, style="DASHED"):
 
 N_GOALS = 8
 GOAL_CARD_SPANS = [(0, 3), (3, 6), (6, 9), (9, 12)]  # 4 cards per row of cards
-GOALS_SETTINGS_ROWS = list(range(53, 61))  # SETTINGS Savings Goals data rows (see NOTES.md)
+GOALS_SETTINGS_ROWS = list(range(58, 66))  # SETTINGS Savings Goals data rows (see NOTES.md)
 
 N_DEBTS = 4
-DEBT_SETTINGS_ROWS = list(range(64, 68))  # SETTINGS Debt Tracker data rows
+DEBT_SETTINGS_ROWS = list(range(69, 73))  # SETTINGS Debt Tracker data rows
 DEBT_NAME_SPAN = (0, 2)
 DEBT_START_SPAN = (2, 3)
 DEBT_PAID_SPAN = (3, 4)
