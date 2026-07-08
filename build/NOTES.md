@@ -283,6 +283,70 @@ existing rules on each month sheet before adding fresh ones. Confirmed via
 rule colours (background = 25%-blend, text = full-strength, matching the
 `lighten()` math).
 
+## ANNUAL OVERVIEW (sheetId 400)
+
+Built per v1 Tab 4 + v2 Section 7 ("SUMIFS across each of the 12 month tabs
+directly -- additive, not INDIRECT-based"; visual layout wasn't mocked up,
+so v1's layout carries over with v2's palette substituted, same remapping
+pattern as DASHBOARD). Columns: B = row label, C:N = Jan..Dec, O = Total.
+Each month's cell is its own direct `SUMIFS(<month>!Amount, <month>!Type,
+"<type>")` -- no CHOOSE needed here since all 12 months display
+simultaneously (CHOOSE was for DASHBOARD's single-selected-month lookup).
+
+- Best/Tightest month cards use `INDEX(month_names, MATCH(MAX/MIN(leftover_row),...))`.
+  `MAX`/`MIN` automatically skip the `"--"` text placeholders for months
+  with no transactions yet, so no data yet is naturally excluded from
+  contention without extra logic. Verified against Jan/Feb's sample data:
+  Feb ($2,212 left over) correctly wins Best, Jan ($1,789.50) Tightest.
+- Palette remapping (same pattern as DASHBOARD): v1's amber current-month
+  highlight -> Pale neutral background (closest confirmed "light emphasis"
+  colour; hot pink can't be a fill). v1's "red" for negative left-over /
+  below-threshold savings rate -> Deep rose (v2's designated negative/
+  caution colour throughout). v1's "light green" Total column ->
+  `lighten(FINANCE_GREEN, 0.15)` (v2's palette has no explicit Finance-green
+  pale tint, so this reuses the same `lighten()` helper added for the
+  month-tab Type badges).
+- Bar chart colours bars by sign via two series (Positive/Negative helper
+  columns, Q/R) rather than per-point styling, same technique as
+  DASHBOARD's bar chart needing a workaround for a per-point limitation --
+  charts colour by series, not by individual bar/slice. No distinct
+  "current month" bar colour or "future month" grey placeholder bar was
+  implemented (no per-point styling available, and a third series felt
+  like too much complexity for a cosmetic detail) -- flagging this
+  simplification rather than silently dropping it.
+
+### Two more Sheets API limitations discovered here
+
+1. **Conditional format `CUSTOM_FORMULA` conditions cannot reference another
+   sheet at all** -- confirmed empirically: `=C16<SETTINGS!$D$9` is rejected
+   outright by the API (not just unsupported in some edge case). The
+   Savings rate row's below-threshold conditional formatting needs to
+   compare against `SETTINGS!$D$9`, so a same-sheet mirror cell (`T1`,
+   `=SETTINGS!$D$9`) exists purely so the conditional format has a
+   same-sheet cell to reference.
+2. **A chart's domain and series must share the same row/column
+   orientation.** The grid header (row 8, Jan..Dec horizontally) couldn't
+   be used as the bar chart's domain because the Positive/Negative helper
+   columns are vertical (12 rows) -- the API rejects mixing a 1-row domain
+   with 12-row series ("ChartSourceRange ranges require all rows or all
+   columns to have length of 1" was the error, which undersells the actual
+   constraint). Added a vertical month-name helper column (`U1:U12`) to
+   match the series' orientation instead.
+
+### Duplicate-rule bug recurs here too -- and gets its general fix
+
+The same "re-running a build script on an already-existing sheet stacks
+duplicate rules/charts instead of replacing them" bug (first found with
+month tabs' Type badges) hit both the conditional format rules (42 stacked
+up in one debugging session, should have been 14) and the embedded chart
+(2 identical "Monthly left over" charts) here too. Fixed with
+`clear_conditional_formats()` and `clear_charts()`, called at the top of
+`main()` before their respective `build_requests()`/`build_charts()` calls
+-- same pattern as month_tabs.py's fix, now applied consistently. **Any
+future tab script (GOALS) that adds conditional formats or charts needs
+this same clear-before-add pattern from the start**, not bolted on after
+a duplicate is discovered.
+
 ### Critical lesson: never delete+recreate a sheet other tabs already reference
 
 Building DASHBOARD (which formula-references SETTINGS and the month tabs)
