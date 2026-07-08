@@ -5,7 +5,7 @@ with open("spreadsheet_id.txt") as f:
 
 sheets, _ = get_services()
 resp = sheets.spreadsheets().values().get(
-    spreadsheetId=SPREADSHEET_ID, range="SETTINGS!A14:B48", valueRenderOption="FORMATTED_VALUE"
+    spreadsheetId=SPREADSHEET_ID, range="SETTINGS!A14:E22", valueRenderOption="FORMATTED_VALUE"
 ).execute()
 for i, row in enumerate(resp.get("values", [])):
     print(14 + i, row)

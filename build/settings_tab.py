@@ -1,5 +1,11 @@
 """Build the SETTINGS tab: structure, formatting, and values.
 
+Column scheme (applies as the standing convention for every tab in this build):
+  Column A = blank padding column, never contains content.
+  Columns B-E = the 4-column content width. Two-column sections (General,
+  Monthly Budget Targets) merge B:C for the label and D:E for the value, so
+  they visually fill the same width as the full-width section bands above them.
+
 Layout reference (1-based row numbers as designed and approved):
   1     Title band
   2     Instruction note
@@ -41,18 +47,20 @@ from palette import (
 )
 
 SHEET_ID = 100
+PAD = 1  # column A is padding; content starts at column B (index 1)
 
 with open("spreadsheet_id.txt") as f:
     SPREADSHEET_ID = f.read().strip()
 
 
 def grid_range(start_row, end_row, start_col, end_col):
+    """start_col/end_col are logical content-column indices (0 = column B)."""
     return {
         "sheetId": SHEET_ID,
         "startRowIndex": start_row,
         "endRowIndex": end_row,
-        "startColumnIndex": start_col,
-        "endColumnIndex": end_col,
+        "startColumnIndex": start_col + PAD,
+        "endColumnIndex": end_col + PAD,
     }
 
 
@@ -82,17 +90,51 @@ def merge(rng, merge_type="MERGE_ALL"):
     return {"mergeCells": {"range": rng, "mergeType": merge_type}}
 
 
+def recreate_sheet(sheets):
+    """Delete and recreate the SETTINGS sheet so old merges/formatting don't
+    linger from the previous column layout. Sheets won't let you delete the
+    last remaining sheet in a spreadsheet, so a temporary placeholder sheet
+    holds the fort while SETTINGS is dropped and rebuilt."""
+    meta = sheets.spreadsheets().get(
+        spreadsheetId=SPREADSHEET_ID, fields="sheets.properties"
+    ).execute()
+    exists = any(s["properties"]["sheetId"] == SHEET_ID for s in meta["sheets"])
+
+    requests = [{"addSheet": {"properties": {"sheetId": 999999, "title": "__temp__"}}}]
+    if exists:
+        requests.append({"deleteSheet": {"sheetId": SHEET_ID}})
+    requests.append({
+        "addSheet": {
+            "properties": {
+                "sheetId": SHEET_ID,
+                "title": "SETTINGS",
+                "gridProperties": {"rowCount": 80, "columnCount": 7, "hideGridlines": True},
+                "tabColor": NEAR_BLACK,
+            }
+        }
+    })
+    requests.append({"deleteSheet": {"sheetId": 999999}})
+    sheets.spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID, body={"requests": requests}
+    ).execute()
+
+
 def build_requests():
     requests = []
 
-    # Base cream background + default text style across the whole used grid.
-    requests.append(repeat_cell(
-        grid_range(0, 80, 0, 6),
-        cell_format(bg=CREAM, fg=NEAR_BLACK, font=CALIBRI, size=10),
-    ))
+    # Base cream background + default text style across the whole used grid
+    # (including the padding column, so it reads as blank margin, not white).
+    requests.append({
+        "repeatCell": {
+            "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 80,
+                      "startColumnIndex": 0, "endColumnIndex": 7},
+            "cell": {"userEnteredFormat": cell_format(bg=CREAM, fg=NEAR_BLACK, font=CALIBRI, size=10)},
+            "fields": "userEnteredFormat",
+        }
+    })
 
-    # Column widths.
-    widths = {0: 210, 1: 170, 2: 150, 3: 150, 4: 40, 5: 40}
+    # Column widths: A = padding, B-E = content, F/G = right buffer.
+    widths = {0: 28, 1: 150, 2: 150, 3: 150, 4: 150, 5: 40, 6: 40}
     for col, width in widths.items():
         requests.append({
             "updateDimensionProperties": {
@@ -103,7 +145,7 @@ def build_requests():
             }
         })
 
-    # Row 1: title band.
+    # Row 1: title band (full 4-column content width).
     requests.append(merge(grid_range(0, 1, 0, 4)))
     requests.append(repeat_cell(
         grid_range(0, 1, 0, 4),
@@ -131,48 +173,36 @@ def build_requests():
         }
     })
 
-    def section_band(row_idx, span_cols=4, bg=FINANCE_GREEN):
-        r = grid_range(row_idx, row_idx + 1, 0, span_cols)
+    def section_band(row_idx, bg=FINANCE_GREEN):
+        r = grid_range(row_idx, row_idx + 1, 0, 4)
         requests.append(merge(r))
         requests.append(repeat_cell(
             r, cell_format(bg=bg, fg=WHITE, font=ARIAL_BLACK, size=12, bold=True, align="LEFT"),
         ))
 
+    def label_value_row(row_idx, number_format=None):
+        """Label merged over logical cols 0-1 (B:C), value merged over 2-3 (D:E)."""
+        label_range = grid_range(row_idx, row_idx + 1, 0, 2)
+        value_range = grid_range(row_idx, row_idx + 1, 2, 4)
+        requests.append(merge(label_range))
+        requests.append(merge(value_range))
+        requests.append(repeat_cell(
+            label_range,
+            cell_format(bg=CREAM, fg=NEAR_BLACK, font=CALIBRI, size=10, align="LEFT"),
+        ))
+        value_fmt = cell_format(bg=PALE_NEUTRAL, fg=FINANCE_GREEN, font=CALIBRI, size=10,
+                                 bold=True, align="LEFT", number_format=number_format)
+        requests.append(repeat_cell(value_range, value_fmt))
+
     # Row 4 (idx 3): GENERAL band.
     section_band(3)
 
     # Rows 5-9 (idx 4-8): general settings label/value pairs.
-    general_rows = [4, 5, 6, 7, 8]
-    for r in general_rows:
-        requests.append(repeat_cell(
-            grid_range(r, r + 1, 0, 1),
-            cell_format(bg=CREAM, fg=NEAR_BLACK, font=CALIBRI, size=10, align="LEFT"),
-        ))
-        requests.append(repeat_cell(
-            grid_range(r, r + 1, 1, 2),
-            cell_format(bg=PALE_NEUTRAL, fg=FINANCE_GREEN, font=CALIBRI, size=10,
-                        bold=True, align="LEFT"),
-        ))
-
-    # Number formats for specific general cells.
-    requests.append(repeat_cell(
-        grid_range(5, 6, 1, 2),
-        cell_format(bg=PALE_NEUTRAL, fg=FINANCE_GREEN, font=CALIBRI, size=10, bold=True,
-                    number_format={"type": "NUMBER", "pattern": "0"}),
-        fields="userEnteredFormat.numberFormat",
-    ))
-    requests.append(repeat_cell(
-        grid_range(7, 8, 1, 2),
-        cell_format(bg=PALE_NEUTRAL, fg=FINANCE_GREEN, font=CALIBRI, size=10, bold=True,
-                    number_format={"type": "NUMBER", "pattern": "#,##0.00"}),
-        fields="userEnteredFormat.numberFormat",
-    ))
-    requests.append(repeat_cell(
-        grid_range(8, 9, 1, 2),
-        cell_format(bg=PALE_NEUTRAL, fg=FINANCE_GREEN, font=CALIBRI, size=10, bold=True,
-                    number_format={"type": "PERCENT", "pattern": "0.00%"}),
-        fields="userEnteredFormat.numberFormat",
-    ))
+    label_value_row(4)  # Your name
+    label_value_row(5, {"type": "NUMBER", "pattern": "0"})  # Year
+    label_value_row(6)  # Currency symbol
+    label_value_row(7, {"type": "NUMBER", "pattern": "#,##0.00"})  # Starting balance
+    label_value_row(8, {"type": "PERCENT", "pattern": "0.00%"})  # Savings rate threshold
 
     # Row 11 (idx 10): MONTHLY BUDGET TARGETS band.
     section_band(10)
@@ -191,10 +221,16 @@ def build_requests():
         }
     })
 
-    # Row 13 (idx 12): column headers for the budget table.
+    # Row 13 (idx 12): column headers for the budget table (Category / Monthly budget target).
+    header_label = grid_range(12, 13, 0, 2)
+    header_value = grid_range(12, 13, 2, 4)
+    requests.append(merge(header_label))
+    requests.append(merge(header_value))
     requests.append(repeat_cell(
-        grid_range(12, 13, 0, 2),
-        cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10, bold=True),
+        header_label, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10, bold=True),
+    ))
+    requests.append(repeat_cell(
+        header_value, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10, bold=True),
     ))
 
     type_groups = [
@@ -211,7 +247,7 @@ def build_requests():
     row_cursor = 13  # 0-indexed row for the first divider (row 14, 1-based)
     category_row_map = {}  # group name -> (start_idx, end_idx) for later reference
     for group_name, color, categories in type_groups:
-        divider_range = grid_range(row_cursor, row_cursor + 1, 0, 2)
+        divider_range = grid_range(row_cursor, row_cursor + 1, 0, 4)
         requests.append(merge(divider_range))
         requests.append(repeat_cell(
             divider_range,
@@ -222,12 +258,15 @@ def build_requests():
         for i, _cat in enumerate(categories):
             row_idx = row_cursor + i
             band_bg = ROW_WHITE if i % 2 == 0 else ROW_TINT
+            name_range = grid_range(row_idx, row_idx + 1, 0, 2)
+            target_range = grid_range(row_idx, row_idx + 1, 2, 4)
+            requests.append(merge(name_range))
+            requests.append(merge(target_range))
             requests.append(repeat_cell(
-                grid_range(row_idx, row_idx + 1, 0, 1),
-                cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10),
+                name_range, cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10),
             ))
             requests.append(repeat_cell(
-                grid_range(row_idx, row_idx + 1, 1, 2),
+                target_range,
                 cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10, align="RIGHT",
                             number_format={"type": "NUMBER", "pattern": "#,##0.00"}),
             ))
@@ -339,35 +378,53 @@ def build_requests():
     return requests, layout
 
 
+def col_letter(logical_col):
+    """logical_col 0 -> 'B', 1 -> 'C', etc. (accounts for the padding column)."""
+    n = logical_col + PAD + 1  # 1-based sheet column number
+    letters = ""
+    while n:
+        n, rem = divmod(n - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
+
+
+LABEL_COL = col_letter(0)   # B
+VALUE_COL = col_letter(2)   # D  (top-left of the merged D:E value cell)
+COL_C = col_letter(1)       # C
+COL_E = col_letter(3)       # E
+
+
 def build_values(layout):
     values = []
 
     def cell(a1, v):
         values.append({"range": f"SETTINGS!{a1}", "values": [[v]]})
 
-    cell("A1", "SETTINGS")
-    cell("A2", "Start here before using any other tab. Fill in your name, year, currency, and "
-               "starting balance first, then set your monthly budget targets by category. "
-               "You only need to do this once.")
+    cell(f"{LABEL_COL}1", "SETTINGS")
+    cell(f"{LABEL_COL}2", "Start here before using any other tab. Fill in your name, year, currency, and "
+                          "starting balance first, then set your monthly budget targets by category. "
+                          "You only need to do this once.")
 
-    cell("A4", "GENERAL")
-    cell("A5", "Your name")
-    cell("B5", "Sarah")
-    cell("A6", "Year")
-    cell("B6", 2026)
-    cell("A7", "Currency symbol")
-    cell("B7", "$")
-    cell("A8", "Starting balance")
-    cell("B8", 1250)
-    cell("A9", "Savings rate threshold")
-    cell("B9", 0.10)
+    cell(f"{LABEL_COL}4", "GENERAL")
+    cell(f"{LABEL_COL}5", "Your name")
+    cell(f"{VALUE_COL}5", "Sarah")
+    cell(f"{LABEL_COL}6", "Year")
+    cell(f"{VALUE_COL}6", 2026)
+    cell(f"{LABEL_COL}7", "Currency symbol")
+    cell(f"{VALUE_COL}7", "$")
+    cell(f"{LABEL_COL}8", "Starting balance")
+    cell(f"{VALUE_COL}8", 1250)
+    cell(f"{LABEL_COL}9", "Savings rate threshold")
+    cell(f"{VALUE_COL}9", 0.10)
 
-    cell("A11", "MONTHLY BUDGET TARGETS")
-    cell("A12", "Category names are fully editable. Change any name here and it updates across "
-                "the whole spreadsheet, including the transaction dropdowns, the dashboard, and "
-                "the annual overview.")
-    cell("A13", "Category")
-    cell("B13", '=CONCATENATE("Monthly budget target (",B7,")")')
+    currency_cell = f"{VALUE_COL}7"  # SETTINGS!D7
+
+    cell(f"{LABEL_COL}11", "MONTHLY BUDGET TARGETS")
+    cell(f"{LABEL_COL}12", "Category names are fully editable. Change any name here and it updates across "
+                           "the whole spreadsheet, including the transaction dropdowns, the dashboard, and "
+                           "the annual overview.")
+    cell(f"{LABEL_COL}13", "Category")
+    cell(f"{VALUE_COL}13", f'=CONCATENATE("Monthly budget target (",{currency_cell},")")')
 
     type_groups = [
         ("INCOME", ["Salary / Wages", "Freelance", "Side hustle", "Bonus", "Other income"]),
@@ -380,19 +437,20 @@ def build_values(layout):
     ]
     row_cursor = 13  # 0-indexed row for first divider (row 14)
     for group_name, categories in type_groups:
-        cell(f"A{row_cursor + 1}", group_name)
+        cell(f"{LABEL_COL}{row_cursor + 1}", group_name)
         row_cursor += 1
         for i, catname in enumerate(categories):
-            cell(f"A{row_cursor + i + 1}", catname)
+            cell(f"{LABEL_COL}{row_cursor + i + 1}", catname)
         row_cursor += len(categories)
 
-    # Savings goals.
+    # Savings goals (genuine 4-column table: B=#, C=Goal name, D=Target amount, E=Target date).
     gs = layout["goals_start_idx"] + 1  # 1-based first goal row
-    cell(f"A{gs - 2}", "SAVINGS GOALS")
-    cell(f"A{gs - 1}", "#")
-    cell(f"B{gs - 1}", "Goal name")
-    cell(f"C{gs - 1}", '=CONCATENATE("Target amount (",B7,")")')
-    cell(f"D{gs - 1}", "Target date")
+    cell(f"{LABEL_COL}{gs - 2}", "SAVINGS GOALS")
+    cell(f"{LABEL_COL}{gs - 1}", "#")
+    cell(f"{COL_C}{gs - 1}", "Goal name")
+    cell(f"{COL_E}{gs - 1}", "Target date")
+    values.append({"range": f"SETTINGS!{VALUE_COL}{gs - 1}",
+                    "values": [[f'=CONCATENATE("Target amount (",{currency_cell},")")']]})
 
     goal_rows = [
         (1, "Emergency fund (3 months)", 5000, "31/12/2026"),
@@ -406,18 +464,19 @@ def build_values(layout):
     ]
     for i, (num, name, amt, date) in enumerate(goal_rows):
         r = gs + i
-        cell(f"A{r}", num)
+        cell(f"{LABEL_COL}{r}", num)
         if name:
-            cell(f"B{r}", name)
-            cell(f"C{r}", amt)
-            cell(f"D{r}", date)
+            cell(f"{COL_C}{r}", name)
+            cell(f"{VALUE_COL}{r}", amt)
+            cell(f"{COL_E}{r}", date)
 
-    # Debt tracker.
+    # Debt tracker (3-column table: B=#, C=Debt name, D=Starting balance).
     ds = layout["debt_start_idx"] + 1
-    cell(f"A{ds - 2}", "DEBT TRACKER")
-    cell(f"A{ds - 1}", "#")
-    cell(f"B{ds - 1}", "Debt name")
-    cell(f"C{ds - 1}", '=CONCATENATE("Starting balance (",B7,")")')
+    cell(f"{LABEL_COL}{ds - 2}", "DEBT TRACKER")
+    cell(f"{LABEL_COL}{ds - 1}", "#")
+    cell(f"{COL_C}{ds - 1}", "Debt name")
+    values.append({"range": f"SETTINGS!{VALUE_COL}{ds - 1}",
+                    "values": [[f'=CONCATENATE("Starting balance (",{currency_cell},")")']]})
 
     debt_rows = [
         (1, "Credit card", 3500),
@@ -427,52 +486,39 @@ def build_values(layout):
     ]
     for i, (num, name, bal) in enumerate(debt_rows):
         r = ds + i
-        cell(f"A{r}", num)
+        cell(f"{LABEL_COL}{r}", num)
         if name:
-            cell(f"B{r}", name)
-            cell(f"C{r}", bal)
+            cell(f"{COL_C}{r}", name)
+            cell(f"{VALUE_COL}{r}", bal)
 
     note_row = layout["note_idx"] + 1
-    cell(f"A{note_row}",
+    cell(f"{LABEL_COL}{note_row}",
          "Savings rate threshold: set this to the minimum savings rate you want to hit each "
          "month. The Annual Overview will flag any month that falls below it.")
 
     types_label_row = layout["types_label_idx"] + 1
-    cell(f"A{types_label_row}",
+    cell(f"{LABEL_COL}{types_label_row}",
          "Transaction types (used for the Type dropdown on month tabs -- please don't delete)")
     ts = layout["types_start_idx"] + 1
     for i, t in enumerate(["Income", "Bill", "Expense", "Saving", "Debt"]):
-        cell(f"A{ts + i}", t)
+        cell(f"{LABEL_COL}{ts + i}", t)
 
     return values
 
 
 def build_notes():
-    """Cell notes marking sample data, keyed by A1 address."""
+    """Cell notes marking sample data. Only one example note is kept (per
+    Minnie's feedback -- a note on every sample cell was noisy); the rest of
+    the sample values are still populated, just without individual notes."""
     return {
-        "B5": "Sample value -- replace with your own name.",
-        "B8": "Sample value -- replace with your own starting balance.",
-        "B52": "Sample goal -- delete or replace.",
-        "C52": "Sample goal -- delete or replace.",
-        "D52": "Sample goal -- delete or replace.",
-        "B53": "Sample goal -- delete or replace.",
-        "C53": "Sample goal -- delete or replace.",
-        "D53": "Sample goal -- delete or replace.",
-        "B54": "Sample goal -- delete or replace.",
-        "C54": "Sample goal -- delete or replace.",
-        "D54": "Sample goal -- delete or replace.",
-        "B55": "Sample goal -- delete or replace.",
-        "C55": "Sample goal -- delete or replace.",
-        "D55": "Sample goal -- delete or replace.",
-        "B63": "Sample debt -- delete or replace.",
-        "C63": "Sample debt -- delete or replace.",
-        "B64": "Sample debt -- delete or replace.",
-        "C64": "Sample debt -- delete or replace.",
+        f"{VALUE_COL}5": "Sample value -- replace with your own.",
     }
 
 
 def main():
     sheets, _drive = get_services()
+
+    recreate_sheet(sheets)
 
     requests, layout = build_requests()
     sheets.spreadsheets().batchUpdate(
@@ -485,7 +531,7 @@ def main():
         body={"valueInputOption": "USER_ENTERED", "data": values},
     ).execute()
 
-    # Cell notes for sample-data markers.
+    # Cell note for the one sample-data example.
     note_requests = []
     for a1, text in build_notes().items():
         note_requests.append({
@@ -500,6 +546,7 @@ def main():
     ).execute()
 
     print("SETTINGS tab built. Layout:", layout)
+    print("LABEL_COL:", LABEL_COL, "VALUE_COL:", VALUE_COL)
 
 
 def a1_to_grid_range(a1):
