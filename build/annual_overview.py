@@ -247,14 +247,36 @@ def build_requests():
     # can't set borders at all (only fill/text) -- a border tied to
     # TODAY()'s month would need to be static and manually moved every
     # month, defeating the point of an automatic highlight.
+    # Split into a header-row rule and a data-rows rule: the header row's
+    # static text is white (for contrast against the green header band),
+    # which goes unreadable once the same light-green tint lands under it,
+    # so that one cell also needs its text switched to Finance green.
+    # The data rows (9-16) stay background-only -- adding a text-colour
+    # override there too would compete with the negative-value rule (Deep
+    # rose text), and Sheets only applies the first matching rule per cell.
     current_month_bg = lighten(FINANCE_GREEN, 0.15)
     for i, m in enumerate(MONTHS):
         col = 1 + i
-        cond_range = grid_range(7, 16, col, col + 1)
+        header_cond_range = grid_range(7, 8, col, col + 1)
+        data_cond_range = grid_range(8, 16, col, col + 1)
         requests.append({
             "addConditionalFormatRule": {
                 "rule": {
-                    "ranges": [cond_range],
+                    "ranges": [header_cond_range],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA",
+                                       "values": [{"userEnteredValue": f'=MONTH(TODAY())={i + 1}'}]},
+                        "format": {"backgroundColor": current_month_bg,
+                                   "textFormat": {"foregroundColor": FINANCE_GREEN, "bold": True}},
+                    },
+                },
+                "index": 0,
+            }
+        })
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [data_cond_range],
                     "booleanRule": {
                         "condition": {"type": "CUSTOM_FORMULA",
                                        "values": [{"userEnteredValue": f'=MONTH(TODAY())={i + 1}'}]},
