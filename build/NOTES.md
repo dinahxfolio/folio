@@ -219,6 +219,51 @@ calculation, only a chart-friendly reshaping of it. Verified the donut/bar
 data ranges resolve to the correct Jan totals and that both `addChart`
 requests came back with the expected `chartId`s.
 
+### Post-review fixes (round 2)
+
+Minnie's review of DASHBOARD surfaced several real issues:
+
+1. **Month tabs were broken** ("no longer work"). Root cause: the same
+   delete+recreate-breaks-cross-sheet-references bug described below also
+   hit the month tabs' data validation (Type/Category dropdowns reference
+   `SETTINGS!...`) and Balance-chain formulas (`SETTINGS!$D$8` for Jan's
+   seed), since settings_tab.py's old delete+recreate ran *after* month_tabs.py
+   had already built those references. Fixed by re-running month_tabs.py
+   (now safe, since it no longer deletes existing sheets) to re-write the
+   formula/validation text with fresh bindings. Confirmed repaired by reading
+   Jan!E1/I1/G4 back (previously `#REF!`, now calculating correctly again).
+2. **Two section bands had no text.** `section_band()` only applied merge +
+   fill colour + font; nothing ever wrote "UPCOMING BILLS" (row 12) or
+   "MONTHLY BUDGET" (row 22) into the merged cell, so the bands rendered as
+   empty coloured strips. Same gap existed for the Upcoming Bills column
+   headers (row 13: Category/Amount/Due day) and the budget table's column
+   headers (row 23: Category/Budget/Actual/Diff./Progress) -- formatting was
+   built for all of these, the label text was not. All four now populated.
+3. **Layout**: the Monthly Budget table (rows 22 down) narrowed from B:M
+   (12 cols) to B:H (7 cols) -- Category (B:D, 3 cols) / Budget (E) /
+   Actual (F) / Diff. (G) / Progress (H) -- freeing I:M for the charts,
+   which now sit beside the table (stacked vertically: donut at row 22,
+   bar chart ~row 37) instead of anchored below everything. Rows 1-20
+   (header, headline cards, breakdown cards, Upcoming Bills) stay full
+   12-column width -- only the budget table section narrowed, per the
+   specific ask.
+4. **Chart colours.** The bar chart's two series now use explicit brand
+   colours (Budget = Pale neutral, Actual = Finance green) via
+   `colorStyle`. The donut chart's slice colours could **not** be changed
+   the same way: `PieChartSpec` in the Sheets API has no field for
+   per-slice colour (only `legendPosition`/`domain`/`series`/
+   `threeDimensional`/`pieHole` exist) -- this is a hard platform
+   limitation, not something left undone. If matching brand colours on the
+   donut matters enough, the alternative is swapping it for a 100%-stacked
+   bar (which does support per-series colour) at the cost of no longer
+   being donut-shaped; flagged to Minnie rather than silently choosing
+   either option.
+5. **"Thicker lines" on the bar chart.** The Charts API has no bar-
+   thickness/gap-width field to set directly. Increased the chart's pixel
+   height substantially (320px -> 700px for 25 categories) instead, which
+   is the only available lever -- more vertical room per category makes
+   Sheets render each bar thicker.
+
 ### Critical lesson: never delete+recreate a sheet other tabs already reference
 
 Building DASHBOARD (which formula-references SETTINGS and the month tabs)

@@ -115,11 +115,11 @@ def L(i):
 
 
 # Budget table column spans (logical, end-exclusive).
-CAT_SPAN = (0, 4)     # B:E
-TARGET_SPAN = (4, 6)  # F:G
-ACTUAL_SPAN = (6, 8)  # H:I
-DIFF_SPAN = (8, 10)   # J:K
-PROG_SPAN = (10, 12)  # L:M
+CAT_SPAN = (0, 3)     # B:D -- narrowed (was B:E) to leave I:M free for charts
+TARGET_SPAN = (3, 4)  # E
+ACTUAL_SPAN = (4, 5)  # F
+DIFF_SPAN = (5, 6)    # G
+PROG_SPAN = (6, 7)    # H
 
 # Helper columns beyond the buffer (logical indices 14-18 -> P,Q,R,S,T).
 MONTH_NUMBER_COL = L(14)     # P
@@ -311,10 +311,14 @@ def build_requests():
                                                          italic=True)))
         requests.append(border_request(grid_range(7, 10, start, end), "top", color, width=4))
 
-    def section_band(row_idx, bg=FINANCE_GREEN):
-        r = grid_range(row_idx, row_idx + 1, 0, 12)
+    def section_band(row_idx, bg=FINANCE_GREEN, span_cols=12):
+        r = grid_range(row_idx, row_idx + 1, 0, span_cols)
         requests.append(merge(r))
         requests.append(repeat_cell(r, cell_format(bg=bg, fg=WHITE, font=ARIAL_BLACK, size=12, bold=True)))
+
+    def maybe_merge(rng):
+        if rng["endColumnIndex"] - rng["startColumnIndex"] > 1:
+            requests.append(merge(rng))
 
     # Row 12 (idx 11): UPCOMING BILLS band.
     section_band(11, bg=DUSTY_BLUE)
@@ -338,16 +342,19 @@ def build_requests():
                                                          number_format={"type": "NUMBER", "pattern": "#,##0.00"})))
         requests.append(repeat_cell(r_due, cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10, align="RIGHT")))
 
-    # Row 22 (idx 21): MONTHLY BUDGET band.
-    section_band(21)
+    # Row 22 (idx 21): MONTHLY BUDGET band -- narrowed to B:H (7 cols) so
+    # I:M is free for the charts, which sit alongside the table rather than
+    # below everything.
+    BUDGET_TABLE_WIDTH = 7
+    section_band(21, span_cols=BUDGET_TABLE_WIDTH)
     for span in (CAT_SPAN, TARGET_SPAN, ACTUAL_SPAN, DIFF_SPAN, PROG_SPAN):
         r = grid_range(22, 23, *span)
-        requests.append(merge(r))
+        maybe_merge(r)
         requests.append(repeat_cell(r, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10, bold=True)))
 
     row_cursor = 23  # 0-indexed row of first divider (row 24, 1-based)
     for group_name, color, categories in TYPE_GROUPS:
-        divider_r = grid_range(row_cursor, row_cursor + 1, 0, 12)
+        divider_r = grid_range(row_cursor, row_cursor + 1, 0, BUDGET_TABLE_WIDTH)
         requests.append(merge(divider_r))
         requests.append(repeat_cell(divider_r, cell_format(bg=color, fg=WHITE, font=CALIBRI, size=10, bold=True)))
         row_cursor += 1
@@ -360,7 +367,7 @@ def build_requests():
             dif_r = grid_range(r, r + 1, *DIFF_SPAN)
             pro_r = grid_range(r, r + 1, *PROG_SPAN)
             for rr in (cat_r, tgt_r, act_r, dif_r, pro_r):
-                requests.append(merge(rr))
+                maybe_merge(rr)
             requests.append(repeat_cell(cat_r, cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10)))
             for rr in (tgt_r, act_r, dif_r):
                 requests.append(repeat_cell(rr, cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10,
@@ -373,13 +380,9 @@ def build_requests():
     total_row_idx = row_cursor + 1  # idx 59 -> row 60, after a spacer at idx 58 -> row 59
     for span in (CAT_SPAN, TARGET_SPAN, ACTUAL_SPAN, DIFF_SPAN, PROG_SPAN):
         r = grid_range(total_row_idx, total_row_idx + 1, *span)
-        requests.append(merge(r))
+        maybe_merge(r)
         requests.append(repeat_cell(r, cell_format(bg=ROSE_PALE_TINT, fg=DEEP_ROSE, font=CALIBRI, size=10, bold=True,
                                                      align="RIGHT" if span != CAT_SPAN else "LEFT")))
-
-    # CHARTS band, two rows below the total row.
-    charts_band_idx = total_row_idx + 2
-    section_band(charts_band_idx)
 
     # Helper cells (P, Q:T) -- visible but de-emphasised, with explanatory notes.
     helper_note_targets = {
@@ -424,7 +427,7 @@ def build_requests():
         bar_data_range, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=8),
     ))
 
-    layout = {"total_row_idx": total_row_idx, "charts_band_idx": charts_band_idx}
+    layout = {"total_row_idx": total_row_idx, "budget_band_idx": 21}
     return requests, layout
 
 
@@ -521,6 +524,13 @@ def build_values(layout):
          "Actuals update automatically. To log a transaction, go to the tab for the selected "
          "month and enter it in the next empty row.")
 
+    cell(f"{L(0)}12", "UPCOMING BILLS")
+    cell(f"{L(0)}13", "Category")
+    cell(f"{L(4)}13", '=CONCATENATE("Amount (",SETTINGS!$D$7,")")')
+    cell(f"{L(8)}13", "Due day")
+
+    cell(f"{L(0)}22", "MONTHLY BUDGET")
+
     # Budget table: category rows first (headline/breakdown cards reference the group ranges below).
     row_cursor = 23
     amount_choose = choose_range(MONTH_COL_AMOUNT)
@@ -530,6 +540,12 @@ def build_values(layout):
     act_col = L(ACTUAL_SPAN[0])
     dif_col = L(DIFF_SPAN[0])
     pro_col = L(PROG_SPAN[0])
+
+    cell(f"{cat_col}23", "Category")
+    cell(f"{tgt_col}23", '=CONCATENATE("Budget (",SETTINGS!$D$7,")")')
+    cell(f"{act_col}23", "Actual")
+    cell(f"{dif_col}23", "Diff.")
+    cell(f"{pro_col}23", "Progress")
 
     for group_name, _color, categories in TYPE_GROUPS:
         cell(f"{cat_col}{row_cursor + 1}", group_name)
@@ -644,10 +660,20 @@ def _gr(start_row, end_row, start_col, end_col):
 
 def build_charts(layout):
     """Donut (spending breakdown by group) + horizontal bar (budget vs actual
-    per category) charts, per v1 Tab 2 / v2 Section 6. The bar chart reads
-    from the gap-free W:Y helper block (see build/NOTES.md) since the Sheets
-    API rejects multi-range chart sources unless each range is contiguous,
-    and the real budget table has divider rows breaking every group up."""
+    per category) charts, per v1 Tab 2 / v2 Section 6. Both sit in columns
+    I:M, stacked vertically, alongside the narrowed (B:H) budget table rather
+    than below everything. The bar chart reads from the gap-free W:Y helper
+    block (see build/NOTES.md) since the Sheets API rejects multi-range
+    chart sources unless each range is contiguous, and the real budget table
+    has divider rows breaking every group up.
+
+    Colour caveat: PieChartSpec has no field for custom per-slice colours in
+    the Sheets API (confirmed -- legendPosition/domain/series/
+    threeDimensional/pieHole are the only fields; there's no colours array),
+    so the donut's slice colours are Sheets' own default palette, not the
+    confirmed brand palette. The bar chart's two series *do* support custom
+    colours and are set to Pale neutral (budget) / Finance green (actual).
+    """
     bar_cat_col_idx = 21 + PAD
     bar_tgt_col_idx = 22 + PAD
     bar_act_col_idx = 23 + PAD
@@ -655,7 +681,9 @@ def build_charts(layout):
     tgt_sources = [_gr(0, BAR_CHART_ROWS, bar_tgt_col_idx, bar_tgt_col_idx + 1)]
     act_sources = [_gr(0, BAR_CHART_ROWS, bar_act_col_idx, bar_act_col_idx + 1)]
 
-    anchor_row = layout["charts_band_idx"] + 1
+    chart_col_idx = PROG_SPAN[1] + PAD  # column I, right after the narrowed budget table (B:H)
+    donut_row = layout["budget_band_idx"]       # row 22
+    bar_row = layout["budget_band_idx"] + 15    # ~row 37, below the donut
 
     donut_chart = {
         "addChart": {
@@ -675,9 +703,9 @@ def build_charts(layout):
                 },
                 "position": {
                     "overlayPosition": {
-                        "anchorCell": {"sheetId": SHEET_ID, "rowIndex": anchor_row, "columnIndex": PAD},
-                        "widthPixels": 420,
-                        "heightPixels": 300,
+                        "anchorCell": {"sheetId": SHEET_ID, "rowIndex": donut_row, "columnIndex": chart_col_idx},
+                        "widthPixels": 470,
+                        "heightPixels": 320,
                     }
                 },
             }
@@ -696,18 +724,21 @@ def build_charts(layout):
                         "domains": [{"domain": {"sourceRange": {"sources": cat_sources}}}],
                         "series": [
                             {"series": {"sourceRange": {"sources": tgt_sources}},
-                             "targetAxis": "BOTTOM_AXIS"},
+                             "targetAxis": "BOTTOM_AXIS", "colorStyle": {"rgbColor": PALE_NEUTRAL}},
                             {"series": {"sourceRange": {"sources": act_sources}},
-                             "targetAxis": "BOTTOM_AXIS"},
+                             "targetAxis": "BOTTOM_AXIS", "colorStyle": {"rgbColor": FINANCE_GREEN}},
                         ],
                     },
                 },
                 "position": {
                     "overlayPosition": {
-                        "anchorCell": {"sheetId": SHEET_ID, "rowIndex": anchor_row,
-                                       "columnIndex": CAT_SPAN[1] + PAD + 1},
-                        "widthPixels": 480,
-                        "heightPixels": 460,
+                        "anchorCell": {"sheetId": SHEET_ID, "rowIndex": bar_row, "columnIndex": chart_col_idx},
+                        "widthPixels": 470,
+                        # Tall relative to 25 categories so each bar reads as
+                        # thick and legible -- the Charts API has no direct
+                        # bar-thickness/gap-width field, so more vertical
+                        # room per category is the only lever available.
+                        "heightPixels": 700,
                     }
                 },
             }
