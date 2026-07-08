@@ -25,5 +25,10 @@ ROW_WHITE = hex_to_rgb("FFFFFF")
 ROW_TINT = hex_to_rgb("F7F5EF")
 WHITE = hex_to_rgb("FFFFFF")
 
+# Not specified in the v2 brief -- v2 only says month tabs get "a muted grey
+# tab colour" without a hex. Chosen as a warm neutral consistent with the
+# confirmed palette's warmth (see NOTES.md).
+MUTED_GREY = hex_to_rgb("9C9C93")
+
 ARIAL_BLACK = "Arial Black"
 CALIBRI = "Calibri"

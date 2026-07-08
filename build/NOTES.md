@@ -42,8 +42,9 @@ is the top-left cell of that merge (column D), not column C.
   targets are in column D (single cell, not merged). Column E holds "Due day"
   (day of month, 1-31) but only for the 7 Bills rows (21-27) -- feeds DASHBOARD's
   Upcoming Bills block. Divider label rows (14, 20, 28, 38, 44) are merged B:E
-  and are part of the same contiguous B15:B48 range — that whole range (B15:B48)
-  is the intended Data Validation source for the Category dropdown on month tabs
+  and are part of the same contiguous **B14:B48** range (the divider row itself
+  is row 14, so the range must start there, not at row 15) — that whole range
+  is the Data Validation source used for the Category dropdown on month tabs
   (flat list with divider rows, per the v2 design brief's rejected-Apps-Script
   decision). Selecting a divider row is a known, accepted tradeoff.
 - Savings goals table (genuine 4-column table, no merges): header row 51 (B=#,
@@ -80,6 +81,71 @@ add colours outside that set for spreadsheet elements.
   month, sorted by soonest due day. This required adding the Due day field
   to SETTINGS above, since nothing in the original data model captured a due
   date.
+
+## Month tabs (Jan-Dec, sheetIds 300-311)
+
+Built per v2 Section 3/4/5: 12 visible tabs, muted grey tab colour, chronological
+entry at the bottom (not the old newest-first/row-2-insertion model), no HYPERLINK
+navigation, no INDIRECT.
+
+Columns (padding convention applies, A blank): B Date | C Description | D Type |
+E Category | F Amount ($) | G Balance ($) | H Notes. Row 1 = month title (B1:D1)
++ Opening balance pill (E1:H1). Row 2 = instruction note. Row 3 = column headers.
+Rows 4-48 = 45 transaction rows. Column I holds a small "closing balance" helper
+(I1) -- visible, not hidden, with an explanatory cell note.
+
+Type dropdown source: `SETTINGS!$B$71:$B$75`. Category dropdown source:
+`SETTINGS!$B$14:$B$48` (the whole flat range, dividers included). Both are strict
+(reject values outside the list) since DASHBOARD/ANNUAL OVERVIEW's SUMIFS need
+exact text matches. Amount has a NUMBER_GREATER 0 validation. Type cells get
+conditional-formatting colour badges matching SETTINGS' divider colours
+(Income/Saving = Finance green, Bill = Dusty blue, Expense = Muted tan,
+Debt = Deep rose).
+
+### Running balance across 12 separate tabs
+
+Splitting one flat TRANSACTIONS tab into 12 month tabs means the running balance
+has to hop from one tab's last row into the next tab's first row. Implementation:
+
+- Each month has a small numeric helper cell **I1** ("closing balance"):
+  `=IF(COUNTA($D$4:$D$48)=0, <this month's own opening value>, INDEX($G$4:$G$48, COUNTA($D$4:$D$48)))`
+- Each month's **opening value** is a single hop: `SETTINGS!$D$8` for Jan, or
+  `<PreviousMonth>!$I$1` for every other month.
+- The visible "Opening: $X" pill and the first data row's Balance formula both
+  reference this same opening value.
+
+This two-part design (rather than one nested lookup) exists because of two bugs
+caught only by reading calculated values back, not by the API accepting the
+request:
+
+1. **The classic "last value in a range" idiom fails silently here.**
+   `=LOOKUP(2,1/(range<>""),range)` is a standard Excel/Sheets trick for finding
+   the last non-blank cell in a range, but in Google Sheets it returned `#N/A`
+   for this exact use (the `1/(range<>"")` division isn't auto-arrayed without
+   an explicit `ARRAYFORMULA` wrapper). Replaced with `COUNTA` + `INDEX`, which
+   needs no array wrapper.
+2. **`INDEX(range, 0)` is not an error.** When a month has zero transactions,
+   `COUNTA` is 0, and naively wrapping `INDEX(range, 0)` in `IFERROR` doesn't
+   help -- `INDEX(range, 0)` returns the *entire range* as a reference rather
+   than erroring, which breaks silently when coerced into text/arithmetic. A
+   month with zero transactions must fall back to *its own opening value*
+   (which may itself be inherited from further back), not to a hardcoded
+   `IFERROR(...) -> SETTINGS starting balance`, or every empty month would
+   incorrectly reset the running balance to the year's starting balance
+   instead of carrying forward whatever it actually was. Verified by checking
+   Mar (empty) and onward all the way to Dec: all correctly carry Feb's actual
+   closing balance rather than resetting.
+3. **Locale-ambiguous date strings get silently misparsed.** Sample dates
+   written as `"02/01/2026"` (intended as 2 January, DD/MM) were read by
+   Sheets' `USER_ENTERED` input as MM/DD (1 February) under the spreadsheet's
+   default locale -- the cell's `dd/mm/yyyy` *display* format does nothing to
+   protect the *input* parse. Fixed by writing sample dates in ISO format
+   (`"2026-01-02"`), which parses unambiguously regardless of locale; the
+   `dd/mm/yyyy` number format still controls how it displays.
+
+All three were caught by reading FORMATTED_VALUE and UNFORMATTED_VALUE back
+across the whole Jan-Dec chain, not by the batchUpdate/values.update calls
+succeeding without error.
 
 ## Decisions this session had to make (not specified by either brief)
 
