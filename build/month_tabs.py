@@ -28,6 +28,7 @@ from palette import (
     MUTED_TAN,
     NEAR_BLACK,
     PALE_NEUTRAL,
+    lighten,
     ROW_TINT,
     ROW_WHITE,
     WHITE,
@@ -323,7 +324,11 @@ def build_requests_for_month(month_idx):
         }
     })
 
-    # Conditional formatting: Type badge colours.
+    # Conditional formatting: Type badge colours. Fill is a ~25%-opacity
+    # tint of the type colour (Minnie's feedback: the original solid fills
+    # read too strong for a per-transaction badge); text switches to the
+    # full-strength colour instead of white, since white doesn't have
+    # enough contrast against the lightened fill.
     type_range = grid_range(sid, FIRST_DATA_ROW - 1, LAST_DATA_ROW, 2, 3)
     for value, color in TYPE_COLORS.items():
         requests.append({
@@ -332,8 +337,8 @@ def build_requests_for_month(month_idx):
                     "ranges": [type_range],
                     "booleanRule": {
                         "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": value}]},
-                        "format": {"backgroundColor": color,
-                                   "textFormat": {"foregroundColor": WHITE, "bold": True}},
+                        "format": {"backgroundColor": lighten(color, 0.25),
+                                   "textFormat": {"foregroundColor": color, "bold": True}},
                     },
                 },
                 "index": 0,
@@ -416,10 +421,36 @@ def build_sample_values(month_idx):
     return values
 
 
+def clear_conditional_formats(sheets):
+    """Delete every existing conditional format rule on each month sheet
+    before build_requests_for_month() adds fresh ones. Necessary because
+    re-running this script on sheets that already exist (the normal,
+    now-safe path) would otherwise stack duplicate rules on top of the old
+    ones via addConditionalFormatRule, rather than replacing them -- this
+    happened for real: a previous repair run left 10 rules per month tab
+    (5 old strong-colour + 5 new) instead of 5."""
+    meta = sheets.spreadsheets().get(
+        spreadsheetId=SPREADSHEET_ID, fields="sheets(properties(sheetId,title),conditionalFormats)"
+    ).execute()
+    requests = []
+    for s in meta["sheets"]:
+        if s["properties"]["title"] not in MONTHS:
+            continue
+        sid = s["properties"]["sheetId"]
+        count = len(s.get("conditionalFormats", []))
+        for _ in range(count):
+            requests.append({"deleteConditionalFormatRule": {"sheetId": sid, "index": 0}})
+    if requests:
+        sheets.spreadsheets().batchUpdate(
+            spreadsheetId=SPREADSHEET_ID, body={"requests": requests}
+        ).execute()
+
+
 def main():
     sheets, _drive = get_services()
 
     recreate_month_sheets(sheets)
+    clear_conditional_formats(sheets)
 
     all_requests = []
     for i in range(12):

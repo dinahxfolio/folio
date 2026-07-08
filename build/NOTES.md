@@ -264,6 +264,25 @@ Minnie's review of DASHBOARD surfaced several real issues:
    is the only available lever -- more vertical room per category makes
    Sheets render each bar thicker.
 
+### Post-review fixes (round 3)
+
+Minnie asked for the month tabs' Type badge colours to be lighter (~20-30%
+opacity of the originals). Sheets fills have no real alpha channel, so
+`palette.lighten(color, alpha)` simulates it by blending toward white
+(`color*alpha + white*(1-alpha)`, alpha=0.25). Badge text switched from
+white to the full-strength type colour, since white loses contrast against
+the now much lighter fill.
+
+This also surfaced a duplicate-rule bug: re-running month_tabs.py on
+already-existing sheets (the normal, safe path now) calls
+`addConditionalFormatRule` again without removing the old rules first, so
+a previous repair run had silently left 10 rules per month tab (5 old +
+5 new) instead of 5. Added `clear_conditional_formats()` to delete all
+existing rules on each month sheet before adding fresh ones. Confirmed via
+`conditionalFormats` count (10 -> 5 per tab) and reading back the actual
+rule colours (background = 25%-blend, text = full-strength, matching the
+`lighten()` math).
+
 ### Critical lesson: never delete+recreate a sheet other tabs already reference
 
 Building DASHBOARD (which formula-references SETTINGS and the month tabs)

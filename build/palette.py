@@ -12,6 +12,14 @@ def hex_to_rgb(hex_code: str) -> dict:
     return {"red": r, "green": g, "blue": b}
 
 
+def lighten(color: dict, alpha: float = 0.25) -> dict:
+    """Blend a colour toward white as if it were painted at `alpha` opacity
+    over a white background. Sheets fills have no real alpha channel, so
+    this is the standard way to simulate "20-30% opacity" as a flat colour:
+    result = color*alpha + white*(1-alpha)."""
+    return {k: v * alpha + 1.0 * (1 - alpha) for k, v in color.items()}
+
+
 FINANCE_GREEN = hex_to_rgb("3D7A5A")
 DEEP_ROSE = hex_to_rgb("A8495F")
 ROSE_PALE_TINT = hex_to_rgb("F5E6EA")
