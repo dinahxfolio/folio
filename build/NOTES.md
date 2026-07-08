@@ -542,6 +542,17 @@ over the whole grid before `updateCells`, in all three scripts that have a
 proactively, not just where it broke, since any of them could hit this on
 a future layout change.
 
+## DASHBOARD title personalisation
+
+Minnie pointed out SETTINGS' "Your name" field had no actual purpose in
+the build yet -- its intended use is DASHBOARD's title reading e.g.
+"Sarah's Budget" instead of a generic label. Title cell (B1) is now
+`=IF(SETTINGS!$D$5="","MONTHLY BUDGET TRACKER",CONCATENATE(SETTINGS!$D$5,"'s Budget"))`.
+Verified both branches: blank name correctly falls back to the generic
+title, and a real name produces "<Name>'s Budget". Scoped to DASHBOARD
+only, since that's what was asked -- ANNUAL OVERVIEW/GOALS/START HERE
+still use their generic titles.
+
 ## Decisions this session had to make (not specified by either brief)
 
 - Editable-cell fill: Pale neutral (#F4F2EC) rather than v1's Pistachio, since v2's

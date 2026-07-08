@@ -515,7 +515,10 @@ def build_values(layout):
 
     month_selector_cell = f"{L(5)}1"  # G1
 
-    cell(f"{L(0)}1", "DASHBOARD")
+    # Personalised title (the whole point of SETTINGS' "Your name" field):
+    # falls back to a generic title if the name hasn't been filled in yet.
+    cell(f"{L(0)}1", '=IF(SETTINGS!$D$5="","MONTHLY BUDGET TRACKER",'
+                     'CONCATENATE(SETTINGS!$D$5,"\'s Budget"))')
     cell(month_selector_cell, "Jan")
     cell(MONTH_NUMBER_ADDR, f'=MATCH({month_selector_cell},{MONTH_ARRAY},0)')
     cell(f"{L(8)}1", '=CONCATENATE(TEXT(EOMONTH(TODAY(),0)-TODAY(),"0")," days left in ",TEXT(TODAY(),"mmmm"))')
