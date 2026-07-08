@@ -439,6 +439,43 @@ change between runs should clear its own sheet's content first**, the
 same way month_tabs.py/annual_overview.py now clear conditional formats/
 charts first for the equivalent reason.
 
+## GOALS (sheetId 500)
+
+Built per v1 Tab 5. Whole-year cumulative view (no month selector needed --
+unlike DASHBOARD, this isn't a single-month lookup), so every total is a
+direct sum of 12 SUMIFS calls (one per month tab), matching v2's stated
+"additive, not INDIRECT" preference for cross-tab formulas.
+
+- Savings goal cards (8, 4x2 grid) pull "amount saved" via the exact
+  Category-name match resolved earlier (see the GOALS design gap entry).
+  Empty slots show "Add a goal in Settings" instead of blank/zero.
+- Debt payoff table: Debt name/Starting balance are live SETTINGS
+  references (same "SETTINGS is the source of truth" reasoning as
+  DASHBOARD's Budget Target column); Monthly payment is the one genuinely
+  editable input on this tab, since SETTINGS' Debt Tracker has nowhere to
+  store it. Verified the whole chain by temporarily setting Credit card's
+  monthly payment to 200: Remaining ($3,350) / 200 -> CEILING = 17 months
+  -> EDATE(TODAY(),17) = Dec 2027, all correct, then cleared it back to
+  blank so the shipped file doesn't ship a sample payment value.
+- Total saved / Total debt remaining only sum populated goal/debt slots
+  (`IF(name<>"",...,0)` per slot), so empty slots don't corrupt the totals.
+
+### Simplifications from v1's colour/behaviour spec (flagged, not silent)
+
+- Progress bar: v1's 4-tier "light sage / amber / Finance green / Finance
+  green+checkmark" collapses to a flat Finance green (Deep rose for debt)
+  sparkline bar plus a checkmark + "Goal reached!" at 100% -- amber doesn't
+  exist in v2's palette, and a distinct "light sage" tone isn't in the
+  confirmed set either.
+- Payoff-date colour: v1's "12-24 months" and "over 24 months" tiers were
+  both amber anyway (apparent v1 inconsistency), so this collapses to two
+  states: under 12 months (Finance green text) and 12+ months (Rose pale
+  tint/Deep rose).
+- "Reached [month year]" (v1 wants the exact month a goal was completed)
+  would need a running-cumulative-vs-transaction-date array formula to
+  determine which transaction tipped it over the target -- shows a plain
+  "Goal reached!" instead of attempting that.
+
 ## Decisions this session had to make (not specified by either brief)
 
 - Editable-cell fill: Pale neutral (#F4F2EC) rather than v1's Pistachio, since v2's
