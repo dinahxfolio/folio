@@ -221,16 +221,21 @@ def build_requests():
         }
     })
 
-    # Row 13 (idx 12): column headers for the budget table (Category / Monthly budget target).
+    # Row 13 (idx 12): column headers for the budget table.
+    # Category (merged B:C) | Monthly budget target (D) | Due day (E, Bills only).
     header_label = grid_range(12, 13, 0, 2)
-    header_value = grid_range(12, 13, 2, 4)
+    header_target = grid_range(12, 13, 2, 3)
+    header_due = grid_range(12, 13, 3, 4)
     requests.append(merge(header_label))
-    requests.append(merge(header_value))
     requests.append(repeat_cell(
         header_label, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10, bold=True),
     ))
     requests.append(repeat_cell(
-        header_value, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10, bold=True),
+        header_target, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10, bold=True),
+    ))
+    requests.append(repeat_cell(
+        header_due, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10, bold=True,
+                                 align="RIGHT"),
     ))
 
     type_groups = [
@@ -259,9 +264,9 @@ def build_requests():
             row_idx = row_cursor + i
             band_bg = ROW_WHITE if i % 2 == 0 else ROW_TINT
             name_range = grid_range(row_idx, row_idx + 1, 0, 2)
-            target_range = grid_range(row_idx, row_idx + 1, 2, 4)
+            target_range = grid_range(row_idx, row_idx + 1, 2, 3)
+            due_range = grid_range(row_idx, row_idx + 1, 3, 4)
             requests.append(merge(name_range))
-            requests.append(merge(target_range))
             requests.append(repeat_cell(
                 name_range, cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10),
             ))
@@ -269,6 +274,11 @@ def build_requests():
                 target_range,
                 cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10, align="RIGHT",
                             number_format={"type": "NUMBER", "pattern": "#,##0.00"}),
+            ))
+            requests.append(repeat_cell(
+                due_range,
+                cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=10, align="RIGHT",
+                            number_format={"type": "NUMBER", "pattern": "0"}),
             ))
         category_row_map[group_name] = (start_idx, start_idx + len(categories))
         row_cursor += len(categories)
@@ -425,22 +435,31 @@ def build_values(layout):
                            "the annual overview.")
     cell(f"{LABEL_COL}13", "Category")
     cell(f"{VALUE_COL}13", f'=CONCATENATE("Monthly budget target (",{currency_cell},")")')
+    cell(f"{COL_E}13", "Due day")
 
+    # Due day (day of month, 1-31) only applies to Bills -- it feeds the
+    # DASHBOARD Upcoming Bills block. Other groups leave it blank.
     type_groups = [
-        ("INCOME", ["Salary / Wages", "Freelance", "Side hustle", "Bonus", "Other income"]),
-        ("BILLS", ["Rent / Mortgage", "Electricity", "Gas / Water", "Internet", "Phone",
-                    "Insurance", "Subscriptions"]),
-        ("EXPENSES", ["Groceries", "Dining out", "Transport", "Health", "Clothing",
-                       "Entertainment", "Personal care", "Gifts", "Miscellaneous"]),
-        ("SAVINGS", ["Emergency fund", "Holiday", "House deposit", "Retirement", "Other savings"]),
-        ("DEBT PAYMENTS", ["Credit card", "Student loan", "Personal loan", "Car finance"]),
+        ("INCOME", [("Salary / Wages", None), ("Freelance", None), ("Side hustle", None),
+                     ("Bonus", None), ("Other income", None)]),
+        ("BILLS", [("Rent / Mortgage", 1), ("Electricity", 15), ("Gas / Water", 18),
+                    ("Internet", 5), ("Phone", 10), ("Insurance", 1), ("Subscriptions", 1)]),
+        ("EXPENSES", [("Groceries", None), ("Dining out", None), ("Transport", None),
+                       ("Health", None), ("Clothing", None), ("Entertainment", None),
+                       ("Personal care", None), ("Gifts", None), ("Miscellaneous", None)]),
+        ("SAVINGS", [("Emergency fund", None), ("Holiday", None), ("House deposit", None),
+                      ("Retirement", None), ("Other savings", None)]),
+        ("DEBT PAYMENTS", [("Credit card", None), ("Student loan", None),
+                            ("Personal loan", None), ("Car finance", None)]),
     ]
     row_cursor = 13  # 0-indexed row for first divider (row 14)
     for group_name, categories in type_groups:
         cell(f"{LABEL_COL}{row_cursor + 1}", group_name)
         row_cursor += 1
-        for i, catname in enumerate(categories):
+        for i, (catname, due_day) in enumerate(categories):
             cell(f"{LABEL_COL}{row_cursor + i + 1}", catname)
+            if due_day is not None:
+                cell(f"{COL_E}{row_cursor + i + 1}", due_day)
         row_cursor += len(categories)
 
     # Savings goals (genuine 4-column table: B=#, C=Goal name, D=Target amount, E=Target date).

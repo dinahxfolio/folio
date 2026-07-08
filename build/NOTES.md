@@ -39,12 +39,13 @@ is the top-left cell of that merge (column D), not column C.
 - `B9` Savings rate threshold label / `D9` value (fraction, e.g. 0.10 = 10%)
 - Category table: category names live in column B (merged B:C), rows 15-19 (Income),
   21-27 (Bills), 29-37 (Expenses), 39-43 (Savings), 45-48 (Debt payments). Budget
-  targets are the matching cells in column D (merged D:E). Divider label rows
-  (14, 20, 28, 38, 44) are merged B:E and are part of the same contiguous B15:B48
-  range — that whole range (B15:B48) is the intended Data Validation source for
-  the Category dropdown on month tabs (flat list with divider rows, per the v2
-  design brief's rejected-Apps-Script decision). Selecting a divider row is a
-  known, accepted tradeoff.
+  targets are in column D (single cell, not merged). Column E holds "Due day"
+  (day of month, 1-31) but only for the 7 Bills rows (21-27) -- feeds DASHBOARD's
+  Upcoming Bills block. Divider label rows (14, 20, 28, 38, 44) are merged B:E
+  and are part of the same contiguous B15:B48 range — that whole range (B15:B48)
+  is the intended Data Validation source for the Category dropdown on month tabs
+  (flat list with divider rows, per the v2 design brief's rejected-Apps-Script
+  decision). Selecting a divider row is a known, accepted tradeoff.
 - Savings goals table (genuine 4-column table, no merges): header row 51 (B=#,
   C=Goal name, D=Target amount formula, E=Target date), data rows 52-59.
 - Debt tracker table (3-column table, no merges): header row 62 (B=#, C=Debt name,
@@ -66,6 +67,19 @@ add colours outside that set for spreadsheet elements.
   sample name) carries an explanatory note, per Minnie's feedback that a note on
   every sample cell was noisy — the rest of the sample values are populated but
   unannotated.
+
+## DASHBOARD dependencies and decisions
+
+- DASHBOARD's month-lookup formulas (CHOOSE over Jan!..Dec!) need the month
+  tabs to exist to be verifiable, so month tabs (Jan-Dec) are being built
+  before DASHBOARD, not after.
+- DASHBOARD's "Upcoming Bills" block (mentioned as confirmed-via-mockup in the
+  v2 brief, Section 6) is not actually described in either brief's text --
+  the mockup itself specified it and isn't available here. Minnie confirmed:
+  show Bill-type categories with no matching transaction logged yet this
+  month, sorted by soonest due day. This required adding the Due day field
+  to SETTINGS above, since nothing in the original data model captured a due
+  date.
 
 ## Decisions this session had to make (not specified by either brief)
 
