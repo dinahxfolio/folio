@@ -177,16 +177,27 @@ def recreate_sheet(sheets):
 def clear_sheet_content(sheets):
     """See settings_tab.py's clear_sheet_content() -- resets cell content
     without deleting the sheet, so re-runs don't leave stale content behind
-    if the layout ever changes."""
+    if the layout ever changes. Also unmerges first (merges are a separate
+    sheet-level property updateCells doesn't touch), or a layout change
+    that alters merge shapes would collide with the old ones -- confirmed
+    on START HERE's single-column -> two-column change."""
     sheets.spreadsheets().batchUpdate(
         spreadsheetId=SPREADSHEET_ID,
-        body={"requests": [{
-            "updateCells": {
-                "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 30,
-                          "startColumnIndex": 0, "endColumnIndex": 15},
-                "fields": "*",
-            }
-        }]},
+        body={"requests": [
+            {
+                "unmergeCells": {
+                    "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 30,
+                              "startColumnIndex": 0, "endColumnIndex": 15},
+                }
+            },
+            {
+                "updateCells": {
+                    "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 30,
+                              "startColumnIndex": 0, "endColumnIndex": 15},
+                    "fields": "*",
+                }
+            },
+        ]},
     ).execute()
 
 

@@ -9,13 +9,27 @@ SETTINGS defaults, not a live formula reference (renaming a category in
 SETTINGS won't update this page, which is an onboarding reference read
 once before customisation, not a live tab).
 
-Simplification from v1: the brief describes the Category quick reference
-as sitting in a "right column" alongside the steps/video/support blocks
-(implying a two-column layout with mismatched row-heights per column).
-Stacked as a single full-width flow instead (steps -> video -> support ->
-category reference, top to bottom) -- much simpler merge geometry, reads
-fine as a single-column onboarding page, and avoids inventing arbitrary
-row-height math to make two independent-height columns align.
+Two-column layout (Minnie's feedback: the original single full-width
+column read too wide). LEFT = steps + video block, RIGHT = support block +
+category quick reference, with a blank gutter column between them -- this
+also happens to restore v1's original "right column" framing for the
+category reference, which an earlier single-column pass had simplified
+away.
+
+Category quick reference rows use a ~25%-opacity tint of each category's
+colour (same `lighten()` technique as month tabs' Type badges) rather than
+the original solid fills, with text switched to the full-strength colour
+for contrast -- Minnie's feedback again, applied consistently.
+
+Adds a TIPS section (Minnie's request, not in either brief): where data
+entry happens, positive-amounts convention, Balance is calculated not
+typed, and date entry. The date tip was reworded from what was asked for:
+"enter DD/MM or MM/DD, then change display via Format Cells" isn't
+accurate -- Sheets parses a typed date using the spreadsheet's *locale* at
+entry time, not a per-cell choice, and Format Cells only changes how an
+already-correct date *displays*. Telling a US-locale buyer to type DD/MM
+could silently save the wrong date with no way to fix it after the fact
+via formatting. Reworded to point buyers at checking their locale instead.
 """
 from auth import get_services
 from palette import (
@@ -30,6 +44,7 @@ from palette import (
     PALE_NEUTRAL,
     ROW_WHITE,
     WHITE,
+    lighten,
 )
 
 SHEET_ID = 600
@@ -89,6 +104,17 @@ def border_request(rng, side, color, width=3, style="SOLID"):
     return {"updateBorders": {"range": rng, side: {"style": style, "width": width, "color": color}}}
 
 
+def row_height(sheets_requests, row_idx, height, end_idx=None):
+    sheets_requests.append({
+        "updateDimensionProperties": {
+            "range": {"sheetId": SHEET_ID, "dimension": "ROWS", "startIndex": row_idx,
+                      "endIndex": end_idx or row_idx + 1},
+            "properties": {"pixelSize": height},
+            "fields": "pixelSize",
+        }
+    })
+
+
 CATEGORY_GROUPS = [
     ("INCOME", FINANCE_GREEN, ["Salary / Wages", "Freelance", "Side hustle", "Bonus", "Other income"]),
     ("BILLS", DUSTY_BLUE, ["Rent / Mortgage", "Electricity", "Gas / Water", "Internet", "Phone",
@@ -99,6 +125,11 @@ CATEGORY_GROUPS = [
                                  "Other savings"]),
     ("DEBT PAYMENTS", DEEP_ROSE, ["Credit card", "Student loan", "Personal loan", "Car finance"]),
 ]
+
+# Two columns with a blank gutter between them.
+LEFT_SPAN = (0, 5)     # B:F
+RIGHT_SPAN = (7, 12)   # I:M
+FULL_SPAN = (0, 12)    # B:M
 
 
 def recreate_sheet(sheets):
@@ -130,15 +161,42 @@ def recreate_sheet(sheets):
 
 
 def clear_sheet_content(sheets):
+    """Reset cell content/format AND unmerge the whole grid. updateCells
+    only touches cell data -- merges are a separate sheet-level property it
+    doesn't clear -- so a layout change (like this one, single column ->
+    two columns) leaves old merges behind that collide with the new,
+    differently-shaped ones ("You must select all cells in a merged range
+    to merge or unmerge them")."""
     sheets.spreadsheets().batchUpdate(
         spreadsheetId=SPREADSHEET_ID,
-        body={"requests": [{
-            "updateCells": {
-                "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 30,
-                          "startColumnIndex": 0, "endColumnIndex": 15},
-                "fields": "*",
-            }
-        }]},
+        body={"requests": [
+            {
+                "unmergeCells": {
+                    "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 30,
+                              "startColumnIndex": 0, "endColumnIndex": 15},
+                }
+            },
+            {
+                "updateCells": {
+                    "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 30,
+                              "startColumnIndex": 0, "endColumnIndex": 15},
+                    "fields": "*",
+                }
+            },
+        ]},
+    ).execute()
+
+
+def clear_conditional_formats(sheets):
+    meta = sheets.spreadsheets().get(
+        spreadsheetId=SPREADSHEET_ID, ranges=["START HERE"], fields="sheets(conditionalFormats)"
+    ).execute()
+    count = len(meta["sheets"][0].get("conditionalFormats", []))
+    if not count:
+        return
+    requests = [{"deleteConditionalFormatRule": {"sheetId": SHEET_ID, "index": 0}} for _ in range(count)]
+    sheets.spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID, body={"requests": requests}
     ).execute()
 
 
@@ -162,107 +220,78 @@ def build_requests():
             }
         })
 
-    # Row 1: hero header.
-    hero_r = grid_range(0, 1, 0, 12)
+    # Row 1: hero header (full width).
+    hero_r = grid_range(0, 1, *FULL_SPAN)
     requests.append(merge(hero_r))
     requests.append(repeat_cell(hero_r, cell_format(bg=FINANCE_GREEN, fg=WHITE, font=ARIAL_BLACK, size=22,
                                                       bold=True, align="CENTER")))
-    requests.append({
-        "updateDimensionProperties": {
-            "range": {"sheetId": SHEET_ID, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
-            "properties": {"pixelSize": 56},
-            "fields": "pixelSize",
-        }
-    })
+    row_height(requests, 0, 56)
 
-    # Row 3 (idx 2): Step 0 note.
-    step0_r = grid_range(2, 3, 0, 12)
+    # --- LEFT column: step 0, three steps, video block ---
+    step0_r = grid_range(2, 3, *LEFT_SPAN)
     requests.append(merge(step0_r))
     requests.append(repeat_cell(step0_r, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10,
                                                        italic=True, wrap=True, align="CENTER")))
-    requests.append({
-        "updateDimensionProperties": {
-            "range": {"sheetId": SHEET_ID, "dimension": "ROWS", "startIndex": 2, "endIndex": 3},
-            "properties": {"pixelSize": 34},
-            "fields": "pixelSize",
-        }
-    })
+    row_height(requests, 2, 44)
 
-    # Rows 5-7 (idx 4-6): three numbered steps.
     for i in range(3):
         r = 4 + i
-        step_r = grid_range(r, r + 1, 0, 12)
+        step_r = grid_range(r, r + 1, *LEFT_SPAN)
         requests.append(merge(step_r))
-        requests.append(repeat_cell(step_r, cell_format(bg=ROW_WHITE, fg=NEAR_BLACK, font=CALIBRI, size=10,
+        requests.append(repeat_cell(step_r, cell_format(bg=ROW_WHITE, fg=NEAR_BLACK, font=CALIBRI, size=9,
                                                           wrap=True)))
-        requests.append({
-            "updateDimensionProperties": {
-                "range": {"sheetId": SHEET_ID, "dimension": "ROWS", "startIndex": r, "endIndex": r + 1},
-                "properties": {"pixelSize": 34},
-                "fields": "pixelSize",
-            }
-        })
+        row_height(requests, r, 54)
         requests.append(border_request(step_r, "left", FINANCE_GREEN, width=3))
 
-    # Rows 9-10 (idx 8-9): video tutorial block, dark background.
-    video_r = grid_range(8, 10, 0, 12)
+    video_r = grid_range(8, 10, *LEFT_SPAN)
     requests.append(merge(video_r))
-    requests.append(repeat_cell(video_r, cell_format(bg=NEAR_BLACK, fg=WHITE, font=CALIBRI, size=11, bold=True,
+    requests.append(repeat_cell(video_r, cell_format(bg=NEAR_BLACK, fg=WHITE, font=CALIBRI, size=10, bold=True,
                                                        wrap=True, align="CENTER")))
-    requests.append({
-        "updateDimensionProperties": {
-            "range": {"sheetId": SHEET_ID, "dimension": "ROWS", "startIndex": 8, "endIndex": 10},
-            "properties": {"pixelSize": 30},
-            "fields": "pixelSize",
-        }
-    })
+    row_height(requests, 8, 30, end_idx=10)
 
-    # Rows 12-13 (idx 11-12): support block.
-    support_r = grid_range(11, 13, 0, 12)
+    # --- RIGHT column: support block, category quick reference ---
+    support_r = grid_range(2, 4, *RIGHT_SPAN)
     requests.append(merge(support_r))
-    requests.append(repeat_cell(support_r, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10,
+    requests.append(repeat_cell(support_r, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=9,
                                                          wrap=True)))
     requests.append(border_request(support_r, "left", FINANCE_GREEN, width=4))
-    requests.append({
-        "updateDimensionProperties": {
-            "range": {"sheetId": SHEET_ID, "dimension": "ROWS", "startIndex": 11, "endIndex": 13},
-            "properties": {"pixelSize": 30},
-            "fields": "pixelSize",
-        }
-    })
+    row_height(requests, 2, 34, end_idx=4)
 
-    # Row 15 (idx 14): CATEGORY QUICK REFERENCE band.
-    band_r = grid_range(14, 15, 0, 12)
+    band_r = grid_range(5, 6, *RIGHT_SPAN)
     requests.append(merge(band_r))
-    requests.append(repeat_cell(band_r, cell_format(bg=FINANCE_GREEN, fg=WHITE, font=ARIAL_BLACK, size=12,
+    requests.append(repeat_cell(band_r, cell_format(bg=FINANCE_GREEN, fg=WHITE, font=ARIAL_BLACK, size=11,
                                                       bold=True)))
 
-    # Row 16 (idx 15): note.
-    cat_note_r = grid_range(15, 16, 0, 12)
+    cat_note_r = grid_range(6, 7, *RIGHT_SPAN)
     requests.append(merge(cat_note_r))
-    requests.append(repeat_cell(cat_note_r, cell_format(bg=CREAM, fg=NEAR_BLACK, font=CALIBRI, size=9, italic=True,
+    requests.append(repeat_cell(cat_note_r, cell_format(bg=CREAM, fg=NEAR_BLACK, font=CALIBRI, size=8, italic=True,
                                                           wrap=True)))
-    requests.append({
-        "updateDimensionProperties": {
-            "range": {"sheetId": SHEET_ID, "dimension": "ROWS", "startIndex": 15, "endIndex": 16},
-            "properties": {"pixelSize": 28},
-            "fields": "pixelSize",
-        }
-    })
+    row_height(requests, 6, 34)
 
-    # Rows 17-21 (idx 16-20): one row per category group.
+    # Category rows: ~25%-opacity tint background, full-strength colour text
+    # (same pattern as month tabs' Type badges -- solid fills read too
+    # strong here too).
     for i, (group_name, color, categories) in enumerate(CATEGORY_GROUPS):
-        r = 16 + i
-        row_r = grid_range(r, r + 1, 0, 12)
+        r = 7 + i
+        row_r = grid_range(r, r + 1, *RIGHT_SPAN)
         requests.append(merge(row_r))
-        requests.append(repeat_cell(row_r, cell_format(bg=color, fg=WHITE, font=CALIBRI, size=9, wrap=True)))
-        requests.append({
-            "updateDimensionProperties": {
-                "range": {"sheetId": SHEET_ID, "dimension": "ROWS", "startIndex": r, "endIndex": r + 1},
-                "properties": {"pixelSize": 26},
-                "fields": "pixelSize",
-            }
-        })
+        requests.append(repeat_cell(row_r, cell_format(bg=lighten(color, 0.25), fg=color, font=CALIBRI, size=8,
+                                                         bold=True, wrap=True)))
+        row_height(requests, r, 28)
+
+    # --- Full width: TIPS section, below both columns ---
+    tips_band_r = grid_range(12, 13, *FULL_SPAN)
+    requests.append(merge(tips_band_r))
+    requests.append(repeat_cell(tips_band_r, cell_format(bg=FINANCE_GREEN, fg=WHITE, font=ARIAL_BLACK, size=12,
+                                                           bold=True)))
+
+    for i in range(4):
+        r = 13 + i
+        tip_r = grid_range(r, r + 1, *FULL_SPAN)
+        requests.append(merge(tip_r))
+        band_bg = CREAM if i % 2 == 0 else PALE_NEUTRAL
+        requests.append(repeat_cell(tip_r, cell_format(bg=band_bg, fg=NEAR_BLACK, font=CALIBRI, size=9, wrap=True)))
+        row_height(requests, r, 32)
 
     layout = {}
     return requests, layout
@@ -275,9 +304,10 @@ def build_values(layout):
         values.append({"range": f"'START HERE'!{a1}", "values": [[v]]})
 
     cell(f"{L(0)}1", "MONTHLY BUDGET TRACKER")
+
+    # LEFT column.
     cell(f"{L(0)}3", "Before you begin, make a copy of this file and keep it somewhere safe. "
                      "That's your blank template for next year.")
-
     cell(f"{L(0)}5", "1. Go to SETTINGS -- Set your currency symbol, your name, and customise "
                      "your budget categories to match how you actually spend. Takes about two "
                      "minutes.")
@@ -286,19 +316,31 @@ def build_values(layout):
                      "the next empty row. Your Dashboard updates automatically as you go.")
     cell(f"{L(0)}7", "3. Go to DASHBOARD -- Select your month from the dropdown. See your full "
                      "picture: what's in, what's out, what's left, all in one place.")
-
     cell(f"{L(0)}9", "▶ Full walkthrough -- 6 minutes\nWatch on YouTube →")
 
-    cell(f"{L(0)}12", "Message me on Etsy and I'll get back to you within 24 hours. No question "
-                      "too small. If something isn't working, I want to know.\n-- Dinah")
-
-    cell(f"{L(0)}15", "CATEGORY QUICK REFERENCE")
-    cell(f"{L(0)}16", "These are your starting categories. Rename any of them in SETTINGS to "
-                      "match how you actually spend. They'll update everywhere automatically.")
-
+    # RIGHT column.
+    cell(f"{L(7)}3", "Message me on Etsy and I'll get back to you within 24 hours. No question "
+                     "too small. If something isn't working, I want to know.\n-- Dinah")
+    cell(f"{L(7)}6", "CATEGORY QUICK REFERENCE")
+    cell(f"{L(7)}7", "These are your starting categories. Rename any of them in SETTINGS to "
+                     "match how you actually spend. They'll update everywhere automatically.")
     for i, (group_name, _color, categories) in enumerate(CATEGORY_GROUPS):
-        r = 17 + i
-        cell(f"{L(0)}{r}", f"{group_name}: " + ", ".join(categories))
+        r = 8 + i
+        cell(f"{L(7)}{r}", f"{group_name}: " + ", ".join(categories))
+
+    # TIPS (full width).
+    cell(f"{L(0)}13", "TIPS")
+    cell(f"{L(0)}14", "Only SETTINGS and the month tabs (Jan-Dec) need your input. Everything "
+                      "else is read only and updates automatically.")
+    cell(f"{L(0)}15", "Amounts are always positive. Enter 45.00, always a positive number -- "
+                      "the Type column tells the tracker whether it's income or an outgoing.")
+    cell(f"{L(0)}16", "Balance fills automatically. Don't type into the Balance column -- it "
+                      "calculates itself.")
+    cell(f"{L(0)}17", "Dates: type them as DD/MM/YYYY (day first), matching how this sheet "
+                      "displays them. If a date looks wrong right after you enter it, check "
+                      "your Sheet's locale under File > Settings matches your country -- typing "
+                      "a date the wrong way round for your locale can silently save the wrong "
+                      "day, and Format Cells only changes how a date displays, not what got saved.")
 
     return values
 
@@ -308,6 +350,7 @@ def main():
 
     recreate_sheet(sheets)
     clear_sheet_content(sheets)
+    clear_conditional_formats(sheets)
 
     requests, layout = build_requests()
     CHUNK = 400

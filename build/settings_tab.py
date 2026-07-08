@@ -576,16 +576,30 @@ def clear_sheet_content(sheets):
     is left behind as a stale duplicate (confirmed: the old Transaction
     Types label stayed at row 70 after the new layout moved it to row 71).
     This clears cell content only, not the sheet itself -- safe to run even
-    though other tabs already hold live formula references to SETTINGS."""
+    though other tabs already hold live formula references to SETTINGS.
+    Also unmerges the whole grid first: updateCells only touches cell data,
+    not merges (a separate sheet-level property), so if a future layout
+    change alters merge *shapes* (not just row positions) the old merges
+    would collide with the new ones -- confirmed this exact failure mode on
+    START HERE's single-column -> two-column change ("You must select all
+    cells in a merged range to merge or unmerge them")."""
     sheets.spreadsheets().batchUpdate(
         spreadsheetId=SPREADSHEET_ID,
-        body={"requests": [{
-            "updateCells": {
-                "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 80,
-                          "startColumnIndex": 0, "endColumnIndex": 7},
-                "fields": "*",
-            }
-        }]},
+        body={"requests": [
+            {
+                "unmergeCells": {
+                    "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 80,
+                              "startColumnIndex": 0, "endColumnIndex": 7},
+                }
+            },
+            {
+                "updateCells": {
+                    "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 80,
+                              "startColumnIndex": 0, "endColumnIndex": 7},
+                    "fields": "*",
+                }
+            },
+        ]},
     ).execute()
 
 

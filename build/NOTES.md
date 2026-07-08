@@ -502,6 +502,46 @@ earlier tab-order scramble) aligns the two once nothing else was left to
 build. Confirmed via a full round of every tab's verify script that the
 reorder (index-only, no sheet recreation) didn't disturb any formula.
 
+## START HERE post-review fixes
+
+Minnie's review asked for three changes: lighter category-reference colours,
+a TIPS section, and a two-column layout (the single full-width column read
+too wide).
+
+- Category rows now use `lighten(color, 0.25)` backgrounds with full-strength
+  text, same treatment as month tabs' Type badges -- consistent application
+  of a fix already made once elsewhere.
+- Two-column layout (LEFT: steps + video, RIGHT: support + category
+  reference, blank gutter column between) actually restores v1's original
+  "category reference in the right column" framing, which an earlier pass
+  had simplified away into a single stacked column.
+- TIPS section added covering: where data entry happens (SETTINGS + month
+  tabs only), positive-amounts convention, Balance being calculated not
+  typed, and date entry. **Reworded the date tip from what was asked for**:
+  "enter DD/MM or MM/DD, then change display via Format Cells" isn't
+  accurate -- Sheets parses a typed date using the spreadsheet's locale at
+  entry time, not a per-cell choice, and Format Cells only changes how an
+  already-*correctly-parsed* date displays afterward. Following the
+  original wording could lead a US-locale buyer to type DD/MM and silently
+  get the wrong date saved, with no way to fix it via formatting after the
+  fact (this is the same underlying issue as the sample-date locale bug
+  documented in the month tabs section above). Reworded to point buyers at
+  checking File > Settings locale instead.
+
+### Another merge-collision bug, same root cause as the row-shift one
+
+Rebuilding START HERE's layout (single column -> two columns) hit
+`"You must select all cells in a merged range to merge or unmerge them"`.
+Root cause: `clear_sheet_content()`'s `updateCells` resets cell data but
+**not merges** -- merges are a separate sheet-level property. A layout
+change that alters merge *shapes* (not just row positions, which is what
+the earlier SETTINGS fix handled) leaves old merges in place that
+partially overlap the new ones. Fixed by adding an `unmergeCells` request
+over the whole grid before `updateCells`, in all three scripts that have a
+`clear_sheet_content()` (settings_tab.py, goals.py, start_here.py) --
+proactively, not just where it broke, since any of them could hit this on
+a future layout change.
+
 ## Decisions this session had to make (not specified by either brief)
 
 - Editable-cell fill: Pale neutral (#F4F2EC) rather than v1's Pistachio, since v2's
