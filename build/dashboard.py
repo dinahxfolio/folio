@@ -127,6 +127,20 @@ BILLS_CAT_COL = L(15)        # Q
 BILLS_DUE_COL = L(16)        # R
 BILLS_PAID_COL = L(17)       # S
 BILLS_RANK_COL = L(18)       # T
+CHART_DATA_COL = L(19)       # U (group label, for the donut chart)
+CHART_DATA_VALUE_COL = L(20)  # V (group actual total)
+CHART_DATA_COL_IDX = 19 + PAD  # physical column index of U, for chart GridRange sources
+
+# Bar-chart data (W,X,Y): a clean, gap-free 25-row mirror of the 4 spending
+# groups' Category/Target/Actual cells. The Sheets API rejects multi-range
+# chart sources unless the ranges are contiguous, and the real budget table
+# has divider rows breaking each group up -- so the chart reads from this
+# single unbroken block instead, which just references the already-computed
+# budget-table cells (no new calculation, same source of truth).
+BAR_CAT_COL = L(21)   # W
+BAR_TGT_COL = L(22)   # X
+BAR_ACT_COL = L(23)   # Y
+BAR_CHART_ROWS = 25   # 7 Bills + 9 Expenses + 5 Savings + 4 Debt
 
 MONTH_NUMBER_CELL = f"{MONTH_NUMBER_COL}$1"   # for use inside formulas (absolute)
 MONTH_NUMBER_ADDR = f"{MONTH_NUMBER_COL}1"    # for direct cell writes
@@ -179,7 +193,7 @@ def recreate_sheet(sheets):
                 "sheetId": SHEET_ID,
                 "title": "DASHBOARD",
                 "index": 1,  # right after SETTINGS, before the month tabs
-                "gridProperties": {"rowCount": 65, "columnCount": 20, "hideGridlines": True,
+                "gridProperties": {"rowCount": 85, "columnCount": 26, "hideGridlines": True,
                                     "frozenRowCount": 1},
                 "tabColor": FINANCE_GREEN,
             }
@@ -363,6 +377,10 @@ def build_requests():
         requests.append(repeat_cell(r, cell_format(bg=ROSE_PALE_TINT, fg=DEEP_ROSE, font=CALIBRI, size=10, bold=True,
                                                      align="RIGHT" if span != CAT_SPAN else "LEFT")))
 
+    # CHARTS band, two rows below the total row.
+    charts_band_idx = total_row_idx + 2
+    section_band(charts_band_idx)
+
     # Helper cells (P, Q:T) -- visible but de-emphasised, with explanatory notes.
     helper_note_targets = {
         f"{MONTH_NUMBER_COL}1": "Internal helper: numeric index (1-12) of the selected month, "
@@ -370,6 +388,8 @@ def build_requests():
         f"{BILLS_CAT_COL}1": "Internal helper table (rows 1-7): Bills categories, due days, "
                               "whether paid this month, and a sort key -- feeds the Upcoming "
                               "Bills block above. Please don't delete.",
+        f"{CHART_DATA_COL}1": "Internal helper table (rows 1-4): spending-by-group totals for "
+                               "the selected month, feeding the donut chart below. Please don't delete.",
     }
     for a1, note in helper_note_targets.items():
         requests.append({
@@ -383,8 +403,28 @@ def build_requests():
     requests.append(repeat_cell(
         helper_range, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=8),
     ))
+    chart_data_range = grid_range(0, 4, 19, 21)
+    requests.append(repeat_cell(
+        chart_data_range, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=8),
+    ))
+    requests.append({
+        "updateCells": {
+            "range": a1_to_grid_range(f"{BAR_CAT_COL}1"),
+            "rows": [{"values": [{"note": "Internal helper table (rows 1-25): a gap-free mirror "
+                                           "of the 4 spending groups' Category/Target/Actual cells "
+                                           "in the budget table above, used as the bar chart's data "
+                                           "source (the Sheets API requires chart source ranges to "
+                                           "be contiguous, and the real table has divider rows "
+                                           "breaking each group up). Please don't delete."}]}],
+            "fields": "note",
+        }
+    })
+    bar_data_range = grid_range(0, BAR_CHART_ROWS, 21, 24)
+    requests.append(repeat_cell(
+        bar_data_range, cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=8),
+    ))
 
-    layout = {"total_row_idx": total_row_idx}
+    layout = {"total_row_idx": total_row_idx, "charts_band_idx": charts_band_idx}
     return requests, layout
 
 
@@ -448,6 +488,22 @@ def data_validations():
     }]
 
 
+def compute_group_row_ranges():
+    """1-based (first, last) category-data-row range per group in the budget
+    table, e.g. INCOME -> (25, 29). Deterministic from TYPE_GROUPS' fixed
+    category counts, so both build_values() and build_charts() can share it
+    without build_values() needing to run first."""
+    row_cursor = 23
+    ranges = {}
+    for group_name, _color, categories in TYPE_GROUPS:
+        row_cursor += 1  # divider row
+        first = row_cursor + 1
+        last = row_cursor + len(categories)
+        ranges[group_name] = (first, last)
+        row_cursor += len(categories)
+    return ranges
+
+
 def build_values(layout):
     values = []
 
@@ -467,7 +523,6 @@ def build_values(layout):
 
     # Budget table: category rows first (headline/breakdown cards reference the group ranges below).
     row_cursor = 23
-    group_row_ranges = {}  # group_name -> (first_row_1based, last_row_1based)
     amount_choose = choose_range(MONTH_COL_AMOUNT)
     category_choose = choose_range(MONTH_COL_CATEGORY)
     cat_col = L(CAT_SPAN[0])
@@ -480,7 +535,6 @@ def build_values(layout):
         cell(f"{cat_col}{row_cursor + 1}", group_name)
         row_cursor += 1
         settings_rows = SETTINGS_ROWS[group_name]
-        first_data_row_1based = row_cursor + 1
         for i, _catname in enumerate(categories):
             r1 = row_cursor + i + 1  # 1-based
             settings_row = settings_rows[i]
@@ -491,9 +545,8 @@ def build_values(layout):
             cell(f"{pro_col}{r1}",
                  f'=IFERROR(SPARKLINE(MIN({act_col}{r1}/{tgt_col}{r1},1),'
                  f'{{"charttype","bar";"max",1;"color1","#3D7A5A"}}),"")')
-        last_data_row_1based = row_cursor + len(categories)
-        group_row_ranges[group_name] = (first_data_row_1based, last_data_row_1based)
         row_cursor += len(categories)
+    group_row_ranges = compute_group_row_ranges()
 
     def group_sum(col, group_name):
         first, last = group_row_ranges[group_name]
@@ -527,6 +580,23 @@ def build_values(layout):
         cell(f"{L(start)}8", label.upper())
         cell(f"{L(start)}9", f'=CONCATENATE(SETTINGS!$D$7,TEXT(({tgt})-({act}),"#,##0.00"))')
         cell(f"{L(start)}10", f'=CONCATENATE("of ",SETTINGS!$D$7,TEXT({tgt},"#,##0.00")," budgeted")')
+
+    # Donut-chart data table (U:V, rows 1-4): spending-by-group actual totals.
+    for i, (_start, group_name, label) in enumerate(breakdown_specs):
+        r = i + 1
+        cell(f"{CHART_DATA_COL}{r}", label)
+        cell(f"{CHART_DATA_VALUE_COL}{r}", f"={group_sum(act_col, group_name)}")
+
+    # Bar-chart data table (W:Y, rows 1-25): gap-free mirror of the 4 spending
+    # groups' Category/Target/Actual cells (see note on W1 for why).
+    bar_row = 1
+    for group_name in ["BILLS", "EXPENSES", "SAVINGS", "DEBT PAYMENTS"]:
+        first, last = group_row_ranges[group_name]
+        for src_row in range(first, last + 1):
+            cell(f"{BAR_CAT_COL}{bar_row}", f"={cat_col}{src_row}")
+            cell(f"{BAR_TGT_COL}{bar_row}", f"={tgt_col}{src_row}")
+            cell(f"{BAR_ACT_COL}{bar_row}", f"={act_col}{src_row}")
+            bar_row += 1
 
     # Upcoming Bills helper table (Q:T, rows 1-7) and display rows (14-20).
     bills_settings_rows = SETTINGS_ROWS["BILLS"]
@@ -565,6 +635,88 @@ def build_values(layout):
     return values
 
 
+def _gr(start_row, end_row, start_col, end_col):
+    """Raw (non-padding-adjusted) GridRange, for chart sources that need to
+    reference already-known absolute column indices directly."""
+    return {"sheetId": SHEET_ID, "startRowIndex": start_row, "endRowIndex": end_row,
+            "startColumnIndex": start_col, "endColumnIndex": end_col}
+
+
+def build_charts(layout):
+    """Donut (spending breakdown by group) + horizontal bar (budget vs actual
+    per category) charts, per v1 Tab 2 / v2 Section 6. The bar chart reads
+    from the gap-free W:Y helper block (see build/NOTES.md) since the Sheets
+    API rejects multi-range chart sources unless each range is contiguous,
+    and the real budget table has divider rows breaking every group up."""
+    bar_cat_col_idx = 21 + PAD
+    bar_tgt_col_idx = 22 + PAD
+    bar_act_col_idx = 23 + PAD
+    cat_sources = [_gr(0, BAR_CHART_ROWS, bar_cat_col_idx, bar_cat_col_idx + 1)]
+    tgt_sources = [_gr(0, BAR_CHART_ROWS, bar_tgt_col_idx, bar_tgt_col_idx + 1)]
+    act_sources = [_gr(0, BAR_CHART_ROWS, bar_act_col_idx, bar_act_col_idx + 1)]
+
+    anchor_row = layout["charts_band_idx"] + 1
+
+    donut_chart = {
+        "addChart": {
+            "chart": {
+                "spec": {
+                    "title": "Spending breakdown",
+                    "pieChart": {
+                        "legendPosition": "RIGHT_LEGEND",
+                        "domain": {"sourceRange": {"sources": [
+                            _gr(0, 4, CHART_DATA_COL_IDX, CHART_DATA_COL_IDX + 1)
+                        ]}},
+                        "series": {"sourceRange": {"sources": [
+                            _gr(0, 4, CHART_DATA_COL_IDX + 1, CHART_DATA_COL_IDX + 2)
+                        ]}},
+                        "pieHole": 0.5,
+                    },
+                },
+                "position": {
+                    "overlayPosition": {
+                        "anchorCell": {"sheetId": SHEET_ID, "rowIndex": anchor_row, "columnIndex": PAD},
+                        "widthPixels": 420,
+                        "heightPixels": 300,
+                    }
+                },
+            }
+        }
+    }
+
+    bar_chart = {
+        "addChart": {
+            "chart": {
+                "spec": {
+                    "title": "Budget vs actual",
+                    "basicChart": {
+                        "chartType": "BAR",
+                        "legendPosition": "BOTTOM_LEGEND",
+                        "axis": [{"position": "LEFT_AXIS"}, {"position": "BOTTOM_AXIS"}],
+                        "domains": [{"domain": {"sourceRange": {"sources": cat_sources}}}],
+                        "series": [
+                            {"series": {"sourceRange": {"sources": tgt_sources}},
+                             "targetAxis": "BOTTOM_AXIS"},
+                            {"series": {"sourceRange": {"sources": act_sources}},
+                             "targetAxis": "BOTTOM_AXIS"},
+                        ],
+                    },
+                },
+                "position": {
+                    "overlayPosition": {
+                        "anchorCell": {"sheetId": SHEET_ID, "rowIndex": anchor_row,
+                                       "columnIndex": CAT_SPAN[1] + PAD + 1},
+                        "widthPixels": 480,
+                        "heightPixels": 460,
+                    }
+                },
+            }
+        }
+    }
+
+    return [donut_chart, bar_chart]
+
+
 def a1_to_grid_range(a1):
     import re
     m = re.match(r"([A-Z]+)(\d+)", a1)
@@ -600,6 +752,11 @@ def main():
             spreadsheetId=SPREADSHEET_ID,
             body={"valueInputOption": "USER_ENTERED", "data": values[i:i + VCHUNK]},
         ).execute()
+
+    chart_requests = build_charts(layout)
+    sheets.spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID, body={"requests": chart_requests}
+    ).execute()
 
     print("DASHBOARD built. Layout:", layout)
 

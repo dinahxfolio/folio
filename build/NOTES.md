@@ -204,6 +204,21 @@ explanatory note on each helper, same pattern as month tabs' I1.
   one; showing e.g. "-40 days left" while reviewing a past month would be
   confusing and wasn't the evident intent.
 
+### Charts
+
+Donut (spending breakdown, U:V helper table) and horizontal bar (budget vs
+actual, W:Y helper table) charts sit below the total row. Both charts read
+from small gap-free helper blocks rather than the visible budget table
+directly, because the Sheets API rejects multi-range chart sources unless
+each range is contiguous ("each sourceRange across the domain & series must
+be in order and contiguous") -- the real budget table has divider rows
+breaking every group's rows apart, which fails that check. W:X:Y is a
+25-row mirror (7 Bills + 9 Expenses + 5 Savings + 4 Debt) that just
+references the already-computed budget-table cells, so there's no new
+calculation, only a chart-friendly reshaping of it. Verified the donut/bar
+data ranges resolve to the correct Jan totals and that both `addChart`
+requests came back with the expected `chartId`s.
+
 ### Critical lesson: never delete+recreate a sheet other tabs already reference
 
 Building DASHBOARD (which formula-references SETTINGS and the month tabs)
