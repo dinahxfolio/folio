@@ -294,7 +294,10 @@ def build_requests_for_month(month_idx):
             "range": grid_range(sid, FIRST_DATA_ROW - 1, LAST_DATA_ROW, 2, 3),
             "rule": {
                 "condition": {"type": "ONE_OF_RANGE",
-                               "values": [{"userEnteredValue": "=SETTINGS!$B$71:$B$75"}]},
+                               # SETTINGS' Type list shifted from B71:B75 to
+                               # B72:B76 when a note row was added to the
+                               # Savings Goals section -- see build/NOTES.md.
+                               "values": [{"userEnteredValue": "=SETTINGS!$B$72:$B$76"}]},
                 "showCustomUi": True,
                 "strict": True,
             },

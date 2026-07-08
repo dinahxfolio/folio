@@ -47,12 +47,21 @@ is the top-left cell of that merge (column D), not column C.
   is the Data Validation source used for the Category dropdown on month tabs
   (flat list with divider rows, per the v2 design brief's rejected-Apps-Script
   decision). Selecting a divider row is a known, accepted tradeoff.
-- Savings goals table (genuine 4-column table, no merges): header row 51 (B=#,
-  C=Goal name, D=Target amount formula, E=Target date), data rows 52-59.
-- Debt tracker table (3-column table, no merges): header row 62 (B=#, C=Debt name,
-  D=Starting balance formula), data rows 63-66. Column E is unused on this table.
-- Transaction types helper list (for the Type dropdown on month tabs): `B71:B75`
+- Savings goals table (genuine 4-column table, no merges): note row 51 (goal
+  name must match a Category name, see below), header row 52 (B=#, C=Goal
+  name, D=Target amount formula, E=Target date), data rows 53-60. Sample
+  goals are the 5 real Savings category names (Emergency fund, Holiday,
+  House deposit, Retirement, Other savings), not arbitrary names, since
+  GOALS tracks progress via an exact Category-name match (see the "GOALS
+  design gap" entry below).
+- Debt tracker table (3-column table, no merges): header row 63 (B=#, C=Debt name,
+  D=Starting balance formula), data rows 64-67. Column E is unused on this table.
+- Transaction types helper list (for the Type dropdown on month tabs): `B72:B76`
   = Income, Bill, Expense, Saving, Debt (exact casing from the v1 brief, unchanged by v2).
+  **These row numbers moved once already** (were B71:B75) when a note row was
+  inserted above the Savings Goals table -- if SETTINGS' layout changes again,
+  re-check every hardcoded SETTINGS row reference in month_tabs.py/dashboard.py/
+  annual_overview.py, not just the ones that seem related.
 
 ## Palette source of truth
 
@@ -379,6 +388,56 @@ scrambled the tab bar order (Jan ended up before DASHBOARD, SETTINGS at the
 very end) -- fixed with an explicit batch of `updateSheetProperties`
 (`index`) requests in the desired left-to-right order. Confirmed final order:
 SETTINGS, DASHBOARD, Jan..Dec.
+
+## GOALS design gap resolved before building
+
+v1's GOALS tab pulls "amount saved so far" from transactions "category
+matched" against each Savings Goal's name. But SETTINGS' sample Goals
+("Emergency fund (3 months)", "Dream holiday", "New laptop", "Wedding
+fund") didn't actually match any value in the Category dropdown (which
+only has the 5 fixed Savings categories: Emergency fund, Holiday, House
+deposit, Retirement, Other savings) -- "New laptop" and "Wedding fund"
+aren't selectable categories at all, so there was nothing for a SUMIFS to
+match against.
+
+Resolved (Minnie confirmed): **goal name must exactly match a Category
+name.** A goal tracks automatically only if its name equals one of the 5
+Savings categories (the user can rename a category to match a custom goal,
+e.g. rename "Other savings" to "Wedding fund"). SETTINGS' sample goals
+now use the 5 real category names directly (rows 53-57), and a note was
+added above the Goals table explaining the linkage requirement. This
+inserted one new row into SETTINGS (a note row, matching the pattern
+already used for Monthly Budget Targets), which shifted every row after it
+down by one -- see the "SETTINGS row-shift" entry below for what that broke
+and how it was caught.
+
+### SETTINGS row-shift fallout (and the general fix)
+
+Inserting that note row shifted SETTINGS' Savings Goals (52-59 -> 53-60),
+Debt Tracker (62-66 -> 63-67), and Transaction Types helper list (71-75 ->
+72-76) down by one row each. This broke month_tabs.py's hardcoded Type
+dropdown source (`SETTINGS!$B$71:$B$75`, now wrong by one row) -- fixed to
+`$B$72:$B$76`. DASHBOARD and ANNUAL OVERVIEW were unaffected since their
+SETTINGS references (category rows 15-48, general settings rows 5-9) all
+sit *before* the insertion point.
+
+This also surfaced a **new class of bug, distinct from the delete+recreate
+one**: build_values() only ever writes to a layout's *current* row
+positions, so when a row insertion shifts the layout, whatever used to
+occupy the old positions is never explicitly overwritten and is left
+behind as a stale duplicate (confirmed: the old "Transaction types..."
+label stayed at row 70 after the new layout moved it to row 71, so both
+70 and 71 showed the label text). Fixed generally with
+`clear_sheet_content()` in settings_tab.py -- resets every cell's value/
+format/note/validation across the whole grid (via `updateCells` with
+`fields: "*"` and no `rows`, which clears rather than writes) before
+rebuilding. This is safe to run even with other tabs holding live formula
+references to SETTINGS, since it clears cell *content*, not the sheet
+itself -- unlike the delete+recreate pattern, which breaks those
+references (see below). **Any tab script that can have its row layout
+change between runs should clear its own sheet's content first**, the
+same way month_tabs.py/annual_overview.py now clear conditional formats/
+charts first for the equivalent reason.
 
 ## Decisions this session had to make (not specified by either brief)
 

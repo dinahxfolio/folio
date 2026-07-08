@@ -294,7 +294,22 @@ def build_requests():
     goals_band_idx = row_cursor + 1  # idx 49 -> row 50
     section_band(goals_band_idx)
 
-    goals_header_idx = goals_band_idx + 1  # idx 50 -> row 51
+    goals_note_idx = goals_band_idx + 1
+    requests.append(merge(grid_range(goals_note_idx, goals_note_idx + 1, 0, 4)))
+    requests.append(repeat_cell(
+        grid_range(goals_note_idx, goals_note_idx + 1, 0, 4),
+        cell_format(bg=CREAM, fg=NEAR_BLACK, font=CALIBRI, size=9, italic=True, wrap=True),
+    ))
+    requests.append({
+        "updateDimensionProperties": {
+            "range": {"sheetId": SHEET_ID, "dimension": "ROWS", "startIndex": goals_note_idx,
+                      "endIndex": goals_note_idx + 1},
+            "properties": {"pixelSize": 34},
+            "fields": "pixelSize",
+        }
+    })
+
+    goals_header_idx = goals_note_idx + 1
     requests.append(repeat_cell(
         grid_range(goals_header_idx, goals_header_idx + 1, 0, 4),
         cell_format(bg=PALE_NEUTRAL, fg=NEAR_BLACK, font=CALIBRI, size=10, bold=True),
@@ -475,19 +490,26 @@ def build_values(layout):
 
     # Savings goals (genuine 4-column table: B=#, C=Goal name, D=Target amount, E=Target date).
     gs = layout["goals_start_idx"] + 1  # 1-based first goal row
-    cell(f"{LABEL_COL}{gs - 2}", "SAVINGS GOALS")
+    cell(f"{LABEL_COL}{gs - 3}", "SAVINGS GOALS")
+    cell(f"{LABEL_COL}{gs - 2}",
+         "Goal name must exactly match one of your Savings categories above for progress to "
+         "track automatically on the Goals tab. Rename a category to match your goal if needed "
+         "(e.g. rename \"Other savings\" to \"Wedding fund\").")
     cell(f"{LABEL_COL}{gs - 1}", "#")
     cell(f"{COL_C}{gs - 1}", "Goal name")
     cell(f"{COL_E}{gs - 1}", "Target date")
     values.append({"range": f"SETTINGS!{VALUE_COL}{gs - 1}",
                     "values": [[f'=CONCATENATE("Target amount (",{currency_cell},")")']]})
 
+    # Sample goals now match the 5 real Savings categories exactly (see the
+    # note above) rather than arbitrary names -- "Dream holiday"/"New
+    # laptop"/"Wedding fund" had nothing to match against on month tabs.
     goal_rows = [
-        (1, "Emergency fund (3 months)", 5000, "31/12/2026"),
-        (2, "Dream holiday", 2000, "30/06/2026"),
-        (3, "New laptop", 1200, "30/09/2026"),
-        (4, "Wedding fund", 8000, "31/12/2027"),
-        (5, "", "", ""),
+        (1, "Emergency fund", 5000, "31/12/2026"),
+        (2, "Holiday", 2000, "30/06/2026"),
+        (3, "House deposit", 15000, "31/12/2028"),
+        (4, "Retirement", 3000, "31/12/2026"),
+        (5, "Other savings", 1000, "31/12/2026"),
         (6, "", "", ""),
         (7, "", "", ""),
         (8, "", "", ""),
@@ -545,10 +567,33 @@ def build_notes():
     }
 
 
+def clear_sheet_content(sheets):
+    """Reset every cell's value/format/note/validation across the whole
+    grid before rebuilding. Necessary once row insertions (like the Goals
+    note added above) shift content down: build_requests()/build_values()
+    only ever write to their *current* target rows, so whatever used to
+    occupy those rows in a prior layout is never explicitly overwritten and
+    is left behind as a stale duplicate (confirmed: the old Transaction
+    Types label stayed at row 70 after the new layout moved it to row 71).
+    This clears cell content only, not the sheet itself -- safe to run even
+    though other tabs already hold live formula references to SETTINGS."""
+    sheets.spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID,
+        body={"requests": [{
+            "updateCells": {
+                "range": {"sheetId": SHEET_ID, "startRowIndex": 0, "endRowIndex": 80,
+                          "startColumnIndex": 0, "endColumnIndex": 7},
+                "fields": "*",
+            }
+        }]},
+    ).execute()
+
+
 def main():
     sheets, _drive = get_services()
 
     recreate_sheet(sheets)
+    clear_sheet_content(sheets)
 
     requests, layout = build_requests()
     sheets.spreadsheets().batchUpdate(
