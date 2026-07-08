@@ -476,6 +476,32 @@ direct sum of 12 SUMIFS calls (one per month tab), matching v2's stated
   determine which transaction tipped it over the target -- shows a plain
   "Goal reached!" instead of attempting that.
 
+## START HERE (sheetId 600) -- last tab, spec now fully built
+
+Built per v1 Tab 1 + v2 Section 5 (Step 2's copy updated for month tabs,
+everything else "carries over from v1 unchanged"). Honoured v1's technical
+note literally: "No formulas on this tab" -- the Category quick reference
+is static text matching SETTINGS' shipped defaults, not a live formula, so
+it will go stale if a buyer renames categories after reading it once during
+onboarding (an onboarding page read before customisation, not a live tab).
+
+Simplification: v1 describes the Category quick reference as a "right
+column" beside the steps/video/support blocks (a two-column layout with
+mismatched per-column row heights). Stacked as one full-width flow instead
+(steps -> video -> support -> category reference) -- much simpler merge
+geometry, reads fine as a single-column onboarding page.
+
+With all 6 confirmed tabs built (SETTINGS, DASHBOARD, Jan-Dec, ANNUAL
+OVERVIEW, GOALS, START HERE), reordered the tab bar to match v2 Section 3's
+exact confirmed sequence: START HERE, DASHBOARD, Jan..Dec, ANNUAL OVERVIEW,
+GOALS, SETTINGS. Building started with SETTINGS first (per Minnie's
+instruction, since other tabs reference it) which is a *build-order*
+convenience, not the intended shipped tab-bar order -- this final reorder
+(via `updateSheetProperties`/`index`, the same technique used to fix the
+earlier tab-order scramble) aligns the two once nothing else was left to
+build. Confirmed via a full round of every tab's verify script that the
+reorder (index-only, no sheet recreation) didn't disturb any formula.
+
 ## Decisions this session had to make (not specified by either brief)
 
 - Editable-cell fill: Pale neutral (#F4F2EC) rather than v1's Pistachio, since v2's
