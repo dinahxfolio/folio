@@ -15,6 +15,7 @@ from auth import get_services
 from palette import DEEP_ROSE, DUSTY_BLUE, FINANCE_GREEN, MUTED_TAN, ROSE_PALE_TINT, WHITE, lighten
 from fun_palette import (
     BLUE_PALE, BLUE_TEXT,
+    GREEN_PALE, GREEN_TEXT,
     LILAC_PALE, LILAC_TEXT,
     PINK, PINK_PALE, PINK_TEXT,
     YELLOW_PALE, YELLOW_TEXT,
@@ -60,8 +61,12 @@ def find_color_map(bg, fg):
     return None
 
 # TEXT_EQ condition value -> (new_bg, new_fg) for month-tab Type badges.
+# Income and Bill both mapped to Blue at first, but Minnie asked for them
+# to be visually distinct in the dropdown -- Income moved to Green (a
+# one-off exception to Green's otherwise "paid status only" scope, per her
+# direct request).
 TYPE_BADGE_MAP = {
-    "Income": (BLUE_PALE, BLUE_TEXT),
+    "Income": (GREEN_PALE, GREEN_TEXT),
     "Bill": (BLUE_PALE, BLUE_TEXT),
     "Expense": (YELLOW_PALE, YELLOW_TEXT),
     "Saving": (LILAC_PALE, LILAC_TEXT),
