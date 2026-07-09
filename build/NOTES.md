@@ -606,3 +606,76 @@ silently overlaps.
 - Category divider row colours mapped from v2's palette-table wording: Income/Savings →
   Finance green, Bills → Dusty blue, Expenses → Muted tan, Debt payments → Deep rose.
 - Year defaults to 2026 (current year at build time) rather than v1's stated 2025.
+
+## "Fun" colourway variant
+
+A second, colour-only copy of the finished tracker, built by duplicating the
+live file (Drive `files.copy()`, `duplicate_fun.py`) rather than rebuilding
+from scripts -- this preserves Minnie's own manual edits and the exact live
+sheetIds, so cross-sheet formulas keep working untouched. Palette (exact
+hexes, `fun_palette.py`):
+
+- Lilac (#B39DDB / #EAE2F7 pale / #5A4A7A text) -- replaces Finance green's
+  structural role: bands, headers, tab colours, Savings category.
+- Pink (#E8829E / #FBE0EC pale / #7A3555 text) -- replaces Deep rose: Debt
+  category, hero cards, over-budget/negative states.
+- Blue (#7FA8D9 / #E1EBFA pale / #2C4A70 text) -- replaces Dusty blue: Bills
+  and Income.
+- Yellow (#FBF0D0 pale / #8A7020 text, no full/solid variant) -- Expenses
+  category and the old Rose-pale-tint "upcoming/caution" role (both
+  confirmed with Minnie via AskUserQuestion).
+- Green (#E4F0E6 pale / #3D6B45 text, no full/solid variant) -- Paid/reached
+  status only (confirmed scope: GOALS' "Goal reached!" and fully-paid debt,
+  not DASHBOARD's under-80%-budget state).
+- Hot pink stays exactly as-is everywhere -- it's a thin accent-line/chart
+  colour in the original, never part of the category-colour system, so
+  there's nothing to remap.
+
+Build order (`build/*_fun.py`, run against `spreadsheet_id_fun.txt`):
+1. `duplicate_fun.py` -- Drive copy, one-time.
+2. `repaint_fun.py` -- base cell fills/text (bands, tab colours, category
+   dividers, hero cards), routed entirely through each tab module's own
+   `grid_range()` to avoid hand-computed column offsets.
+3. `recolor_cf_fun.py` -- recolours existing conditional-format rules in
+   place (condition/range untouched). Month-tab Type badges matched by
+   condition text (Income/Saving share one Neutral colour but diverge in
+   Fun); DASHBOARD/ANNUAL OVERVIEW/GOALS matched by current colour with a
+   tolerance comparison (`abs(diff) <= 0.02`) -- an exact match after
+   rounding was too strict, since Sheets quantizes stored RGB components to
+   8-bit and a freshly-recomputed `lighten()` can drift ~0.004 from what's
+   actually stored.
+4. `chart_colors_fun.py` -- recolours chart series via `updateChartSpec`,
+   fetching each chart's live spec and swapping only `colorStyle.rgbColor`
+   on matching series (same tolerance-based matching as step 3).
+5. `border_colors_fun.py` -- recolours accent borders (DASHBOARD's
+   breakdown-card top borders, START HERE's step/support left-borders) via
+   fresh `updateBorders` requests.
+6. `goals_status_fun.py` -- adds two brand-new conditional-format rules to
+   GOALS for the Green "reached/paid" status, since Neutral never had an
+   equivalent to recolour: `TEXT_CONTAINS "Goal reached!"` on each goal
+   card's progress cell, and `NUMBER_EQ 0` on the Remaining column for a
+   fully-paid debt.
+
+**Live file drifted from committed scripts in two places** (discovered
+while verifying colours landed correctly, not assumed from source):
+- DASHBOARD's "Budget vs actual" bar chart is live-coloured Dusty blue /
+  Hot pink, not the Pale-neutral / Finance-green the script comments
+  describe -- a manual tweak made after the script was last run, never
+  written back. Confirmed against the *original* Neutral file directly
+  (not just the Fun copy) before deciding how to handle it. Asked Minnie;
+  resolved as Dusty blue → Lilac (still follows Finance green's role),
+  Hot pink untouched.
+- START HERE's support-block merge sits one column to the left of what
+  `RIGHT_SPAN`/`grid_range()` currently compute (confirmed via the live
+  `merges` list on the original file) and is already a Hot-pink box, not
+  the Finance-green left-border the script describes. `border_colors_fun.py`'s
+  request for this element landed on a non-anchor cell inside the existing
+  merge and had no visible effect either way -- harmless, since the correct
+  action was to leave this element alone (Hot pink already matches "stays
+  exactly as-is").
+
+**General lesson**: for a colour-only pass on a long-lived, hand-edited
+file, verify live colour/position state directly (read the actual cells/
+charts/merges) before trusting build-script source as ground truth -- the
+scripts describe intent at the time they were last run, not necessarily
+what's on the sheet now.
